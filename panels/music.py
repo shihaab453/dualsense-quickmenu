@@ -13,6 +13,13 @@
 # will take window focus away from the overlay (expected — that's how
 # logging in works). Press the PS button again afterward to bring the menu
 # back.
+#
+# There are three logged-out-ish states, not one. Before anything works the
+# user needs a Spotify client ID of their own (see actions/spotify_client.py
+# for why it isn't baked in), and a 32-character ID can't be typed with a
+# D-pad — so that state offers a row that closes the overlay and opens the
+# desktop Settings window instead. Once an ID is saved, the normal
+# browser-based login row takes over.
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -24,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import settings_window
 from actions import album_art
 from actions import spotify_client as sp
 from icons import render_icon
@@ -71,13 +79,16 @@ class _LoginSignal(QObject):
     finished = Signal(bool, str)
 
 
-class _LoginRow(QFrame):
-    def __init__(self):
+class _ActionRow(QFrame):
+    """A single full-width pressable row — used for the two entry points on
+    the logged-out view ("Set up Spotify" and "Log in with Spotify")."""
+
+    def __init__(self, text: str):
         super().__init__()
         self.setObjectName("row")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(18, 14, 18, 14)
-        label = QLabel("Log in with Spotify")
+        label = QLabel(text)
         label.setStyleSheet("font-size: 20px; font-weight: 600;")
         lay.addWidget(label)
         self.set_selected(False)
@@ -237,7 +248,11 @@ class MusicPanel(Panel):
         self._status_label.setWordWrap(True)
         self._status_label.setStyleSheet("font-size: 14px; color: rgba(255,255,255,0.5);")
         lay.addWidget(self._status_label)
-        self._login_row = _LoginRow()
+        # Both rows live in this one view; whichever state the panel is in
+        # shows one and hides the other (see _show_setup / _show_logged_out).
+        self._setup_row = _ActionRow("Set up Spotify…")
+        lay.addWidget(self._setup_row)
+        self._login_row = _ActionRow("Log in with Spotify")
         lay.addWidget(self._login_row)
         self._view_stack.addWidget(self._logged_out_view)
 
@@ -367,9 +382,20 @@ class MusicPanel(Panel):
         self.layout().invalidate()
         self.request_relayout()
 
+    def _show_setup(self) -> None:
+        self._status_label.setText(
+            "Spotify needs a one-time setup before you can browse your songs. "
+            "Press Cross to close the overlay and open Settings."
+        )
+        self._setup_row.show()
+        self._login_row.hide()
+        self._show_view(self._logged_out_view)
+
     def _show_logged_out(self) -> None:
         if not self._logging_in:
             self._status_label.setText("Log in to control Spotify from here.")
+        self._setup_row.hide()
+        self._login_row.show()
         self._show_view(self._logged_out_view)
 
     def _show_library(self) -> None:
@@ -405,7 +431,18 @@ class MusicPanel(Panel):
         self._detail_art.setStyleSheet("")
         self._detail_art.setPixmap(pixmap)
 
-    # ---- login ----
+    # ---- setup / login ----
+
+    def _open_settings(self) -> None:
+        # The overlay is frameless, always-on-top and deliberately holds the
+        # foreground (see overlay._force_foreground), so a normal window shown
+        # underneath it would be invisible. Closing the menu first hands focus
+        # back to the desktop, and then the settings window can come forward.
+        overlay = self.window()
+        close_menu = getattr(overlay, "close_menu", None)
+        if callable(close_menu):
+            close_menu()
+        settings_window.open_settings()
 
     def _start_login(self) -> None:
         if self._logging_in:
@@ -578,6 +615,16 @@ class MusicPanel(Panel):
             (self._repeat_tile, self._cycle_repeat),
         ):
             tile.action = action
+
+        # No client ID yet: the only useful thing a D-pad can do here is send
+        # the user to the desktop Settings window.
+        if not sp.is_configured():
+            return RowList(
+                [self._setup_row],
+                on_activate=lambda i, r: self._open_settings(),
+                orientation="horizontal",
+                on_enter=self._show_setup,
+            )
 
         try:
             logged_in = sp.is_logged_in()

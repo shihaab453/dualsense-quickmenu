@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+import settings_window
 from controller import DualSenseListener
 from overlay import OverlayWindow
 
@@ -80,6 +81,9 @@ def main() -> None:
     tray.setToolTip("DualSense Quick Menu")
     tray_menu = QMenu()
     tray_menu.addAction("Show menu").triggered.connect(overlay.open_menu)
+    # First-run setup (Spotify client ID, Task Switcher games) can't happen on
+    # the D-pad-driven overlay — see settings_window's module docstring.
+    tray_menu.addAction("Settings…").triggered.connect(settings_window.open_settings)
     tray_menu.addAction("Quit").triggered.connect(app.quit)
     tray.setContextMenu(tray_menu)
     tray.show()

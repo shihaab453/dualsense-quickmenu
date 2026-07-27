@@ -1,28 +1,19 @@
-# Task Switcher backing: a manually-curated list of games (there's no
-# Windows API for "recently played games" the way PS5 has, so the user
-# maintains config/pinned_games.json themselves — see that file for the
-# format). "Recent" games are whichever of those are currently running,
-# detected via psutil rather than any launcher-specific API, so this works
-# regardless of whether a game came from Epic, Steam, or anywhere else.
+# Task Switcher backing: a curated list of games (there's no Windows API for
+# "recently played games" the way a PS5 has, so the list is maintained by the
+# user through the Settings window, and stored in %APPDATA% via settings.py).
+# "Recent" games are whichever of those are currently running, detected via
+# psutil rather than any launcher-specific API, so this works regardless of
+# whether a game came from Epic, Steam, or anywhere else.
 
-import json
 import os
 
 import psutil
 
-_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config",
-    "pinned_games.json",
-)
+import settings
 
 
 def _load_games() -> list:
-    try:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
+    return settings.get_pinned_games()
 
 
 def _running_process_names() -> set:

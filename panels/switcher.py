@@ -4,8 +4,8 @@
 # on a row launches that game.
 #
 # There's no Windows API for "recently played games" the way a PS5 has, so
-# this is backed by a config file you maintain yourself — see
-# config/pinned_games.json and the README for the format.
+# this is backed by a list you maintain yourself, through the Settings window
+# (tray icon -> Settings). See actions/games.py.
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
 
@@ -86,8 +86,8 @@ class SwitcherPanel(Panel):
 
         if not self._game_rows:
             hint = QLabel(
-                "No games configured yet. Add some to config/pinned_games.json"
-                " — see the README for the format."
+                "No games added yet. Right-click the tray icon and choose"
+                " Settings to add some."
             )
             hint.setWordWrap(True)
             hint.setStyleSheet("font-size: 15px; color: rgba(255,255,255,0.5);")

@@ -18,7 +18,18 @@ import spotipy
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyPKCE
 
-CLIENT_ID = "00000000000000000000000000000000REDACTED"
+import settings
+
+# The client ID is *not* baked in, deliberately. A Spotify app registered on
+# the developer dashboard starts in "development mode", which only works for
+# up to 25 users that the app's owner adds by hand, by email address, in the
+# dashboard. Shipping one ID would mean every stranger who installed this got
+# refused by Spotify's own login page before any of our code ran.
+#
+# So each user supplies their own client ID (Settings window -> Spotify), from
+# a free app they create on the dashboard themselves. A dev-mode app always
+# works for the account that created it, so being the only user of your own
+# app means the 25-user limit never applies to anyone.
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 SCOPE = " ".join(
     [
@@ -32,9 +43,16 @@ SCOPE = " ".join(
     ]
 )
 
-_CACHE_PATH = os.path.join(os.environ["APPDATA"], "DualSenseQuickMenu", "spotify_token.json")
-
 _client = None  # cached spotipy.Spotify instance, built lazily once logged in
+
+
+def _cache_path() -> str:
+    return os.path.join(settings.data_dir(), "spotify_token.json")
+
+
+class NotConfigured(Exception):
+    """No Spotify client ID has been set up yet — the user needs to visit the
+    Settings window first. Distinct from "configured but not logged in"."""
 
 
 class PlaybackUnavailable(Exception):
@@ -50,22 +68,47 @@ class PlaybackUnavailable(Exception):
         super().__init__(reason)
 
 
+def is_configured() -> bool:
+    """True once the user has entered a Spotify client ID. Nothing else in
+    this module can work until this is True."""
+    return bool(settings.get_spotify_client_id())
+
+
 def _auth_manager() -> SpotifyPKCE:
-    os.makedirs(os.path.dirname(_CACHE_PATH), exist_ok=True)
+    client_id = settings.get_spotify_client_id()
+    if not client_id:
+        raise NotConfigured("No Spotify client ID has been set up yet.")
+    os.makedirs(settings.data_dir(), exist_ok=True)
     return SpotifyPKCE(
-        client_id=CLIENT_ID,
+        client_id=client_id,
         redirect_uri=REDIRECT_URI,
         scope=SCOPE,
-        cache_path=_CACHE_PATH,
+        cache_path=_cache_path(),
         open_browser=True,
     )
 
 
 def is_logged_in() -> bool:
     """True if we already have a valid (or refreshable) cached token —
-    checking this never opens a browser."""
+    checking this never opens a browser, and is False rather than an error
+    when no client ID is configured yet."""
+    if not is_configured():
+        return False
     auth = _auth_manager()
     return auth.validate_token(auth.cache_handler.get_cached_token()) is not None
+
+
+def forget_login() -> None:
+    """Drops the cached OAuth token and the built client. Called when the
+    client ID changes: a token issued by one Spotify app is meaningless to a
+    different one, so keeping it would produce a confusing "logged in, but
+    every call fails" state instead of a clean prompt to log in again."""
+    global _client
+    _client = None
+    try:
+        os.remove(_cache_path())
+    except OSError:
+        pass  # no token cached — nothing to forget
 
 
 def login_async(on_done) -> None:

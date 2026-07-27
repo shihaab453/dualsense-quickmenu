@@ -1,17 +1,15 @@
 # DualSense Quick Menu — a PS5-style Control Center overlay for Windows.
-# Copyright (C) 2026 shihaab453
+# Copyright (C) 2026 shihaab453. All rights reserved except as granted in
+# LICENSE.
 #
-# This program is free software: you can redistribute it and/or modify it under
-# the terms of the GNU General Public License as published by the Free Software
-# Foundation, either version 3 of the License, or (at your option) any later
-# version.
+# Licensed under the PolyForm Strict License 1.0.0 with additional permissions
+# — see LICENSE. In short: you may read this code, run the app for your own
+# personal non-commercial use, and modify it for yourself or to contribute back.
+# You may NOT distribute or publish the software or any modified version, and
+# you may not remove the author attribution or present this work as your own.
 #
-# This program is distributed in the hope that it will be useful, but WITHOUT
-# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along with
-# this program. If not, see <https://www.gnu.org/licenses/>.
+# THE SOFTWARE COMES WITHOUT ANY WARRANTY OR CONDITION, AND THE LICENSOR IS NOT
+# LIABLE FOR ANY DAMAGES ARISING FROM ITS USE. See LICENSE for the full terms.
 #
 # ---------------------------------------------------------------------------
 #

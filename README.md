@@ -200,19 +200,27 @@ instead, which is functionally equivalent).
 
 ## Licence
 
-Copyright (C) 2026 shihaab453.
+Copyright (C) 2026 shihaab453. All rights reserved except as granted in
+[LICENSE](LICENSE) — the PolyForm Strict License 1.0.0 plus additional
+permissions.
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the **GNU General Public License, version 3** or (at your option)
-any later version. The full text is in [LICENSE](LICENSE).
+**You may:**
 
-It is distributed in the hope that it will be useful, but **without any
-warranty** — without even the implied warranty of merchantability or fitness for
-a particular purpose. See the licence for details.
+- read, study and learn from this source code
+- download and run the app for your own personal, non-commercial use
+- modify the code for your own personal use
+- submit your changes back here as a contribution — see
+  [CONTRIBUTING.md](CONTRIBUTING.md)
 
-In short: you're free to use, study, change and share this, but anything you
-distribute that's built on it has to be free software under the same licence
-too.
+**You may not:**
+
+- distribute, publish, share, upload or re-host this software, or any modified
+  version of it
+- remove or alter the author's name or the copyright notices, or present this
+  work as your own
+
+The software comes with **no warranty of any kind**. See [LICENSE](LICENSE) for
+the terms that actually govern; the summary above is not the licence.
 
 Bundled dependencies keep their own licences — notably PySide6 (Qt for Python),
 which is LGPL v3.

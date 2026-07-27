@@ -121,9 +121,10 @@ class SettingsWindow(QDialog):
 
         close_row = QHBoxLayout()
         # The version is here so a tester can read the build off the screen when
-        # reporting something, without digging through the log. The licence line
-        # is here because the GPL asks an interactive program to surface it at
-        # the interface, not only in the LICENSE file.
+        # reporting something, without digging through the log. The copyright and
+        # licence line is here so the app states its authorship and terms at the
+        # interface, not only in a file someone would have to go looking for —
+        # this project's licence makes attribution a condition (see LICENSE).
         version_label = QLabel(
             f"{version.APP_NAME} {version.VERSION} · {version.COPYRIGHT} · "
             f'<a style="color: rgba(255,255,255,0.55);" '

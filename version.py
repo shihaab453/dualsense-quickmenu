@@ -14,11 +14,11 @@
 APP_NAME = "DualSense Quick Menu"
 VERSION = "0.1.0-alpha.1"
 
-# Shown in the Settings window footer. The GPL asks that an interactive program
-# make its licensing visible at the interface, not only in the LICENSE file.
+# Shown in the Settings window footer, so the app states its authorship and
+# terms at the interface rather than only in a file someone has to go find.
 COPYRIGHT = "Copyright (C) 2026 shihaab453"
-LICENSE_NAME = "GPL v3"
-LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
+LICENSE_NAME = "Licence"
+LICENSE_URL = "https://polyformproject.org/licenses/strict/1.0.0"
 
 
 def numeric_version() -> tuple:

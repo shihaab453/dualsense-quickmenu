@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+import logs
 import settings_window
 from controller import DualSenseListener
 from overlay import OverlayWindow
@@ -60,6 +61,10 @@ def _make_tray_icon() -> QIcon:
 
 
 def main() -> None:
+    # First, before anything that could fail: under pythonw.exe there's no
+    # console, so without this an early crash leaves no trace at all.
+    logs.setup()
+
     app = QApplication(sys.argv)
     # We live in the tray: closing/hiding the overlay must not quit the app.
     app.setQuitOnLastWindowClosed(False)

@@ -12,10 +12,13 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+import logs
 from actions import volume
 from icons import render_icon, split_color_opacity
 from nav import RowList
 from panels.base import Panel, selected_row_style
+
+log = logs.get(__name__)
 
 
 def _qcolor(color: str) -> QColor:
@@ -63,6 +66,9 @@ class _InfoRow(QFrame):
         try:
             self._value.setText(self._get_value())
         except Exception:
+            # Usually pycaw failing to enumerate a device — e.g. no microphone
+            # is plugged in at all.
+            log.exception("Couldn't read the value for a Sound device row")
             self._value.setText("Unavailable")
 
     def set_selected(self, selected: bool) -> None:
@@ -142,6 +148,7 @@ class _VolumeRow(QFrame):
         try:
             percent = self._get_percent()
         except Exception:
+            log.exception("Couldn't read a volume level; showing 0%%")
             percent = 0
         self._bar.set_percent(percent)
         self._percent.setText(f"{percent}%")
@@ -150,7 +157,7 @@ class _VolumeRow(QFrame):
         try:
             self._change_percent(delta)
         except Exception:
-            pass
+            log.exception("Couldn't change a volume level by %s%%", delta)
         self.refresh()
 
     def set_selected(self, selected: bool) -> None:
@@ -183,6 +190,7 @@ class _ToggleRow(QFrame):
         try:
             on = self._get_state()
         except Exception:
+            log.exception("Couldn't read a Sound toggle's state; assuming off")
             on = False
         color = "#3ddc97" if on else "rgba(255,255,255,0.2)"
         self._switch.setStyleSheet(f"background: {color}; border-radius: 12px;")
@@ -191,7 +199,7 @@ class _ToggleRow(QFrame):
         try:
             self._set_state()
         except Exception:
-            pass
+            log.exception("Couldn't toggle a Sound control (e.g. mic mute)")
         self.refresh()
 
     def set_selected(self, selected: bool) -> None:

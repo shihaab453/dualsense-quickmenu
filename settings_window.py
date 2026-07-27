@@ -32,8 +32,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import logs
 import settings
 from actions import spotify_client as sp
+
+log = logs.get(__name__)
 
 _DASHBOARD_URL = "https://developer.spotify.com/dashboard"
 
@@ -118,6 +121,8 @@ class SettingsWindow(QDialog):
         self._build_spotify_section(lay)
         lay.addWidget(_divider())
         self._build_games_section(lay)
+        lay.addWidget(_divider())
+        self._build_troubleshooting_section(lay)
 
         close_row = QHBoxLayout()
         close_row.addStretch(1)
@@ -242,6 +247,7 @@ class SettingsWindow(QDialog):
         except Exception:
             # A malformed token cache or a network hiccup shouldn't leave this
             # window blank — treat it as "not logged in" and say so.
+            log.exception("Couldn't check Spotify login state for the settings window")
             logged_in = False
 
         if not client_id:
@@ -337,6 +343,39 @@ class SettingsWindow(QDialog):
         # Takes *_ because it's connected to currentRowChanged, which emits the
         # new row index, as well as being called directly with no arguments.
         self._remove_button.setEnabled(self._games_list.currentRow() >= 0)
+
+    # ---- troubleshooting ----
+
+    def _build_troubleshooting_section(self, lay: QVBoxLayout) -> None:
+        title = QLabel("Troubleshooting")
+        title.setObjectName("sectionTitle")
+        lay.addWidget(title)
+
+        hint = QLabel(
+            "When something doesn't work, the app records what went wrong in a "
+            "log file. Nothing is sent anywhere automatically — but opening this "
+            "folder and sending <b>log.txt</b> is the fastest way to get a "
+            "problem diagnosed."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        hint.setTextFormat(Qt.RichText)
+        lay.addWidget(hint)
+
+        row = QHBoxLayout()
+        open_button = QPushButton("Open log folder")
+        open_button.clicked.connect(self._open_log_folder)
+        row.addWidget(open_button)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+    def _open_log_folder(self) -> None:
+        folder = os.path.dirname(logs.log_path())
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            log.exception("Couldn't create the log folder %s", folder)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     # ---- opening ----
 

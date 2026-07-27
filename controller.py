@@ -10,6 +10,10 @@ import time
 
 from pydualsense import pydualsense
 
+import logs
+
+log = logs.get(__name__)
+
 # pydualsense state attribute -> name used by the rest of the app
 _BUTTONS = {
     "ps": "ps",
@@ -70,25 +74,45 @@ class DualSenseListener:
         # Outer loop: (re)connect forever. Inner loop (_poll): read buttons
         # until the controller goes away, then come back here and retry.
         # This is what makes unplugging/replugging mid-session painless.
+        # Logged only on the transition into "can't find it", not on every
+        # retry: with no controller plugged in, init() fails every 2 seconds
+        # forever, and that's a normal state — logging each attempt would bury
+        # everything else in the file.
+        logged_absent = False
+
         while self._running:
             ds = pydualsense()
             try:
                 ds.init()  # raises if no controller is plugged in
             except Exception:
+                if not logged_absent:
+                    logged_absent = True
+                    log.warning(
+                        "No DualSense found — will keep retrying every %ss. If one "
+                        "is plugged in over USB, another tool (DS4Windows, Steam's "
+                        "PlayStation Controller Support) may have claimed it.",
+                        _RECONNECT_INTERVAL,
+                        exc_info=True,
+                    )
                 self._sleep(_RECONNECT_INTERVAL)
                 continue
 
+            logged_absent = False
+            log.info("DualSense connected")
             self._emit_connection(True)
             try:
                 self._poll(ds)
             finally:
                 self.battery_percent = None
                 self.held = {name: False for name in _BUTTONS.values()}
+                log.info("DualSense disconnected")
                 self._emit_connection(False)
                 try:
                     ds.close()
                 except Exception:
-                    pass  # device already gone — nothing left to close
+                    # Device already gone — nothing left to close, and this is
+                    # the expected path when the cable is pulled.
+                    log.debug("close() on an already-gone DualSense", exc_info=True)
 
     def _poll(self, ds):
         prev = {name: False for name in _BUTTONS.values()}

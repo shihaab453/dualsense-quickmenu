@@ -18,7 +18,10 @@ import spotipy
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyPKCE
 
+import logs
 import settings
+
+log = logs.get(__name__)
 
 # The client ID is *not* baked in, deliberately. A Spotify app registered on
 # the developer dashboard starts in "development mode", which only works for
@@ -122,6 +125,10 @@ def login_async(on_done) -> None:
             _auth_manager().get_access_token()
             on_done(True, None)
         except Exception as e:
+            # The message reaches the Music panel, but the traceback only ever
+            # existed here — and a mismatched redirect URI is the single most
+            # likely first-run failure, so it needs to be in the log.
+            log.exception("Spotify login failed")
             on_done(False, str(e))
 
     threading.Thread(target=worker, daemon=True).start()

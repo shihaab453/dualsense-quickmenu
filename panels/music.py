@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import logs
 import settings_window
 from actions import album_art
 from actions import spotify_client as sp
@@ -44,6 +45,8 @@ from panels.base import (
     make_scrollable_rows,
     selected_row_style,
 )
+
+log = logs.get(__name__)
 
 _REPEAT_CYCLE = ["off", "context", "track"]
 
@@ -467,6 +470,7 @@ class MusicPanel(Panel):
         try:
             total = sp.get_liked_songs_total()
         except Exception:
+            log.exception("Couldn't read the Liked Songs count")
             total = 0
         liked_row = _LibraryRow("Liked Songs", f"Playlist · {total} songs", playlist_id=None)
         self._library_rows.append(liked_row)
@@ -475,6 +479,7 @@ class MusicPanel(Panel):
         try:
             playlists = sp.get_playlists(limit=6)
         except Exception:
+            log.exception("Couldn't fetch the user's playlists")
             playlists = []
         for pl in playlists:
             name = pl.get("name", "Playlist")
@@ -511,6 +516,10 @@ class MusicPanel(Panel):
             else:
                 tracks = sp.get_playlist_tracks(playlist_id, limit=20)
         except Exception:
+            # The most likely cause of a mysteriously empty song list, and
+            # historically a response-shape mismatch rather than a network
+            # problem — see HANDOFF.md gotcha #7.
+            log.exception("Couldn't fetch tracks for playlist %r", playlist_id)
             tracks = []
         for track in tracks:
             row = _TrackRow(track)
@@ -537,6 +546,7 @@ class MusicPanel(Panel):
                 e.reason, _UNAVAILABLE_MESSAGES["other"]
             )
         except Exception:
+            log.exception("Couldn't start playback for %r", track.get("uri"))
             self._detail_status_pending = _UNAVAILABLE_MESSAGES["other"]
         else:
             self._detail_status_pending = ""
@@ -556,6 +566,7 @@ class MusicPanel(Panel):
         try:
             playback = sp.get_current_playback()
         except Exception:
+            log.exception("Couldn't read current playback state")
             playback = None
 
         if playback:
@@ -569,6 +580,7 @@ class MusicPanel(Panel):
             try:
                 liked = sp.is_liked(self._current_track_id)
             except Exception:
+                log.exception("Couldn't check liked state for %r", self._current_track_id)
                 liked = False
             self._like_tile.set_icon_name("like_filled" if liked else "like_outline")
             self._like_tile.set_active(liked)
@@ -582,6 +594,7 @@ class MusicPanel(Panel):
             )
             return
         except Exception:
+            log.exception("Playback control %r failed", getattr(tile, "_icon_name", "?"))
             self._detail_status.setText(_UNAVAILABLE_MESSAGES["other"])
             return
         self._detail_status.setText("")
@@ -599,6 +612,7 @@ class MusicPanel(Panel):
             playback = sp.get_current_playback()
             current = playback.get("repeat_state", "off") if playback else "off"
         except Exception:
+            log.exception("Couldn't read repeat state; assuming off")
             current = "off"
         next_mode = _REPEAT_CYCLE[(_REPEAT_CYCLE.index(current) + 1) % len(_REPEAT_CYCLE)]
         sp.set_repeat(next_mode)
@@ -629,6 +643,7 @@ class MusicPanel(Panel):
         try:
             logged_in = sp.is_logged_in()
         except Exception:
+            log.exception("Couldn't validate the cached Spotify token")
             logged_in = False
 
         if not logged_in:

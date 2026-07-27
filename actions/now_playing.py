@@ -8,6 +8,10 @@
 
 import asyncio
 
+import logs
+
+log = logs.get(__name__)
+
 try:
     from winrt.windows.media.control import (
         GlobalSystemMediaTransportControlsSessionManager as _MediaManager,
@@ -33,4 +37,5 @@ def get() -> dict | None:
     try:
         return asyncio.run(_fetch())
     except Exception:
+        log.warning("Windows media session lookup failed", exc_info=True)
         return None

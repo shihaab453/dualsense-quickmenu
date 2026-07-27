@@ -25,9 +25,14 @@ import settings
 _TMP = tempfile.mkdtemp(prefix="dsqm_verify_")
 settings.data_dir = lambda: _TMP
 
+import logs
 import settings_window
 from actions import games
 from actions import spotify_client as sp
+
+# Routed into the temp dir by the data_dir patch above, so the last section can
+# check that panel failures really do reach the log file.
+logs.setup()
 
 failures = []
 
@@ -160,6 +165,30 @@ def after_configured_open():
     panel = overlay._active_panel
     check("login row visible once configured", panel._login_row.isVisible())
     check("setup row hidden once configured", not panel._setup_row.isVisible())
+    QTimer.singleShot(20, check_library_errors_logged)
+
+
+def check_library_errors_logged():
+    # A failing Spotify call used to leave an empty list and no trace at all.
+    # Force one and confirm it now reaches the log file.
+    sp.is_logged_in = lambda: True
+    sp.get_liked_songs_total = lambda: (_ for _ in ()).throw(RuntimeError("boom: liked total"))
+    sp.get_playlists = lambda limit=6: (_ for _ in ()).throw(RuntimeError("boom: playlists"))
+    open_music()
+    QTimer.singleShot(150, after_library_errors)
+
+
+def after_library_errors():
+    panel = overlay._active_panel
+    check("library still renders despite failures", panel is not None)
+    with open(logs.log_path(), "r", encoding="utf-8") as f:
+        text = f.read()
+    check("failed playlist fetch is logged",
+          "Couldn't fetch the user's playlists" in text)
+    check("failed liked-count fetch is logged",
+          "Couldn't read the Liked Songs count" in text)
+    check("the underlying exception is in the log", "boom: playlists" in text)
+    overlay.close_menu()
     QTimer.singleShot(20, check_switcher)
 
 

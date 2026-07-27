@@ -11,11 +11,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
+import logs
 from actions import album_art
 from actions import now_playing
 from actions import spotify_client as sp
 from nav import RowList
 from panels.base import Panel
+
+log = logs.get(__name__)
 
 _ART_SIZE = 64
 # Panel width (460) minus its own left+right margins (36 each, from
@@ -107,6 +110,9 @@ class NowPlayingPanel(Panel):
                 return None
             playback = sp.get_current_playback()
         except Exception:
+            # Falls back to the Windows-wide media session, so this is a
+            # degraded-but-working path rather than a failure the user sees.
+            log.exception("Spotify playback lookup failed; falling back to Windows")
             return None
         if not playback or not playback.get("item"):
             return None

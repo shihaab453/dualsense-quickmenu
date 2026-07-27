@@ -11,6 +11,10 @@ import urllib.request
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap
 
+import logs
+
+log = logs.get(__name__)
+
 _cache: dict[str, QPixmap] = {}  # url -> raw decoded pixmap, not yet scaled/rounded
 
 
@@ -74,6 +78,10 @@ class _Loader(QObject):
             with urllib.request.urlopen(url, timeout=6) as resp:
                 data = resp.read()
         except Exception:
+            # Empty bytes leaves the color placeholder in place, which is a
+            # fine outcome — logged at warning rather than exception because a
+            # flaky image CDN is not a bug in this app.
+            log.warning("Album art download failed for %s", url, exc_info=True)
             data = b""
         self._downloaded.emit(url, data)
 

@@ -9,6 +9,7 @@
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
 
+import logs
 from actions import games
 from nav import RowList
 from panels.base import (
@@ -18,6 +19,8 @@ from panels.base import (
     make_scrollable_rows,
     selected_row_style,
 )
+
+log = logs.get(__name__)
 
 
 def _section_label(text: str) -> QLabel:
@@ -99,6 +102,9 @@ class SwitcherPanel(Panel):
             try:
                 games.launch(row.game.get("path", ""))
             except Exception:
-                pass  # bad/missing path — nothing sensible to do but not crash
+                # Bad/missing path (game moved or uninstalled) — nothing
+                # sensible to do in the overlay, but don't crash, and do leave
+                # a record so the user can find out why nothing happened.
+                log.exception("Couldn't launch game: %r", row.game)
 
         return RowList(self._game_rows, on_activate=on_activate, orientation="vertical")

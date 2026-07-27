@@ -11,6 +11,10 @@
 import json
 import os
 
+import logs
+
+log = logs.get(__name__)
+
 _DIR_NAME = "DualSenseQuickMenu"
 _FILE_NAME = "settings.json"
 
@@ -44,7 +48,12 @@ def _read_json(path: str):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
+    except FileNotFoundError:
+        return None  # normal on a fresh install — not worth logging
     except (OSError, ValueError):
+        # Corrupt or unreadable: the caller silently falls back to defaults,
+        # which from the user's side looks like their settings vanished.
+        log.exception("Couldn't read %s — falling back to defaults", path)
         return None
 
 
@@ -64,7 +73,8 @@ def load() -> dict:
         try:
             save(values)
         except OSError:
-            pass  # can't write yet — fine, we'll re-migrate next launch
+            # Can't write yet — fine, we'll re-migrate next launch.
+            log.exception("Couldn't persist the migrated games list")
     return values
 
 

@@ -145,6 +145,11 @@ reacting to the D-pad; closing the menu gives focus straight back.
 
 ## Troubleshooting
 
+**Start here for anything not listed below.** The app writes what went wrong to
+a log file — right-click the tray icon → **Settings…** → **Open log folder**,
+and look at `log.txt` (or send it along when reporting a problem). Nothing is
+uploaded anywhere automatically.
+
 - **PS button does nothing** — make sure the controller is on USB and that no
   other tool (DS4Windows, Steam with "PlayStation Controller Support" enabled)
   is capturing the controller.

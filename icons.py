@@ -15,9 +15,15 @@
 import re
 
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLabel
+
+# The app's own branding mark — the blue "PS" disc used for the tray icon and,
+# via tools/make_icon.py, the .exe's icon. Drawn in code at whatever size is
+# asked for rather than shipped as a bitmap, so it stays crisp at the 16px
+# Explorer needs and the 256px the taskbar wants.
+_APP_ICON_BLUE = "#2d6ff2"
 
 _RGBA_RE = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 
@@ -34,6 +40,27 @@ def split_color_opacity(color: str):
         return color, 1.0
     r, g, b, a = match.groups()
     return f"#{int(r):02x}{int(g):02x}{int(b):02x}", float(a)
+
+def render_app_icon(size: int) -> QPixmap:
+    """The blue "PS" disc, at any size. Shared by main.py's tray icon and the
+    .ico generator so the two can't drift apart."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setBrush(QColor(_APP_ICON_BLUE))
+    painter.setPen(Qt.NoPen)
+    inset = max(1, round(size * 0.0625))
+    painter.drawEllipse(inset, inset, size - inset * 2, size - inset * 2)
+    painter.setPen(QColor("white"))
+    font = painter.font()
+    font.setBold(True)
+    font.setPixelSize(max(6, round(size * 0.40)))
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignCenter, "PS")
+    painter.end()
+    return pixmap
+
 
 _ICONS = {
     "home": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11L12 4l8 7"/><path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/></svg>',

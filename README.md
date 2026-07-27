@@ -42,6 +42,26 @@ icon's **Show menu**, or `--demo`, to open it).
 
 ## Setup
 
+### Option A — download the build (recommended)
+
+1. Download `DualSenseQuickMenu-windows.zip` and extract it anywhere (about
+   126 MB extracted).
+2. Plug in the DualSense with a **USB cable** (Bluetooth not supported yet).
+3. Run `DualSenseQuickMenu.exe`. No Python needed.
+
+The app lives in the system tray (blue "PS" icon) — right-click it for
+**Show menu**, **Settings…** and **Quit**. Windows may show a
+"Windows protected your PC" SmartScreen warning the first time, because the
+build isn't code-signed; **More info → Run anyway**.
+
+To start it automatically when you log in, right-click `DualSenseQuickMenu.exe`
+→ **Create shortcut**, then move that shortcut into `shell:startup`
+(Win+R, type `shell:startup`).
+
+Then follow **Spotify setup** and **Task Switcher setup** below.
+
+### Option B — run from source
+
 1. Install dependencies (one time):
    ```
    .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -68,6 +88,19 @@ C:\Apps\dualsense-quickmenu\.venv\Scripts\pythonw.exe C:\Apps\dualsense-quickmen
 
 Put that shortcut in `shell:startup` (Win+R, type `shell:startup`) to have it
 start automatically when you log in.
+
+### Building the distributable yourself
+
+```
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe tools\build.py
+```
+
+That runs PyInstaller, then runs the built exe's `--selftest`, and only zips it
+into `dist\DualSenseQuickMenu-windows.zip` if every check passes. The selftest
+step isn't skippable on purpose: the ways a packaged build of this app breaks
+are all silent (blank icons, wrong font, dead PS button), so "it built" on its
+own doesn't tell you much.
 
 ## Spotify setup
 

@@ -8,11 +8,25 @@
 import threading
 import time
 
-from pydualsense import pydualsense
-
 import logs
 
 log = logs.get(__name__)
+
+
+def _new_device():
+    """Constructs a pydualsense object, importing the library on first use
+    rather than at module import.
+
+    pydualsense pulls in hidapi, which `ffi.dlopen("hidapi.dll")`s at *import*
+    time — so an unloadable DLL (the classic packaged-build failure, since that
+    DLL ships inside the pydualsense package and has to be bundled by hand)
+    would otherwise kill the whole app during startup, before logging is even
+    configured, leaving nothing to diagnose it with. Deferred, it becomes a
+    logged warning on a background thread instead, and the tray, overlay and
+    keyboard fallback all keep working."""
+    from pydualsense import pydualsense
+
+    return pydualsense()
 
 # pydualsense state attribute -> name used by the rest of the app
 _BUTTONS = {
@@ -81,16 +95,18 @@ class DualSenseListener:
         logged_absent = False
 
         while self._running:
-            ds = pydualsense()
             try:
+                ds = _new_device()
                 ds.init()  # raises if no controller is plugged in
             except Exception:
                 if not logged_absent:
                     logged_absent = True
                     log.warning(
-                        "No DualSense found — will keep retrying every %ss. If one "
-                        "is plugged in over USB, another tool (DS4Windows, Steam's "
-                        "PlayStation Controller Support) may have claimed it.",
+                        "No DualSense available — will keep retrying every %ss. "
+                        "Usual causes: none plugged in over USB; another tool "
+                        "(DS4Windows, Steam's PlayStation Controller Support) has "
+                        "claimed it; or, in a packaged build, hidapi.dll wasn't "
+                        "bundled next to the pydualsense package.",
                         _RECONNECT_INTERVAL,
                         exc_info=True,
                     )

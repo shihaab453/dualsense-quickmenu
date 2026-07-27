@@ -183,11 +183,12 @@ reacting to the D-pad; closing the menu gives focus straight back.
 
 ## Troubleshooting
 
-**Start here for anything not listed below.** The app writes what went wrong to
-a log file — right-click the tray icon → **Settings…** → **Open log folder**,
-and look at `log.txt` (or send it along when reporting a problem). Nothing is
-uploaded anywhere automatically. The version is shown at the bottom of the
-Settings window; include it when reporting anything.
+**Start here for anything not listed below.** Right-click the tray icon →
+**Settings…** → **Copy diagnostics**, then paste the result into your message.
+It's a short summary of your setup plus the last few errors, and it deliberately
+contains no passwords, tokens, or account details. **Open log folder** next to
+it gets you the full `log.txt` if more detail is needed. Nothing is uploaded
+anywhere automatically.
 
 - **PS button does nothing** — make sure the controller is on USB and that no
   other tool (DS4Windows, Steam with "PlayStation Controller Support" enabled)

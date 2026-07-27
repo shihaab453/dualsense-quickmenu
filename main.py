@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon,
 )
 
+import diagnostics
 import logs
 import resources
 import settings
@@ -211,6 +212,13 @@ def main() -> None:
     )
     bridge.button_pressed.connect(overlay.handle_button)
     bridge.connection_changed.connect(overlay.set_controller_connected)
+
+    # Lets Settings -> Copy diagnostics state whether a controller is actually
+    # connected. Registered as a probe rather than imported, so diagnostics.py
+    # doesn't need to reach back into main.
+    diagnostics.register_controller_probe(
+        lambda: (listener.connected, listener.battery_percent)
+    )
 
     tray = QSystemTrayIcon(_make_tray_icon())
     tray.setToolTip(f"{version.APP_NAME} {version.VERSION}")

@@ -15,7 +15,7 @@
 
 import os
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import diagnostics
 import logs
 import settings
 import version
@@ -358,10 +359,10 @@ class SettingsWindow(QDialog):
         lay.addWidget(title)
 
         hint = QLabel(
-            "When something doesn't work, the app records what went wrong in a "
-            "log file. Nothing is sent anywhere automatically — but opening this "
-            "folder and sending <b>log.txt</b> is the fastest way to get a "
-            "problem diagnosed."
+            "If something doesn't work, press <b>Copy diagnostics</b> and paste "
+            "the result into your message — it's a short summary of your setup "
+            "and the last few errors. Nothing is sent anywhere automatically, "
+            "and it contains no passwords or account details."
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -369,11 +370,40 @@ class SettingsWindow(QDialog):
         lay.addWidget(hint)
 
         row = QHBoxLayout()
+        copy_button = QPushButton("Copy diagnostics")
+        copy_button.setObjectName("primary")
+        copy_button.clicked.connect(self._copy_diagnostics)
+        row.addWidget(copy_button)
         open_button = QPushButton("Open log folder")
         open_button.clicked.connect(self._open_log_folder)
         row.addWidget(open_button)
         row.addStretch(1)
         lay.addLayout(row)
+
+        self._diagnostics_status = QLabel()
+        self._diagnostics_status.setObjectName("status")
+        self._diagnostics_status.setWordWrap(True)
+        lay.addWidget(self._diagnostics_status)
+
+    def _copy_diagnostics(self) -> None:
+        try:
+            text = diagnostics.report()
+        except Exception:
+            log.exception("Couldn't build the diagnostics report")
+            self._diagnostics_status.setText(
+                "Couldn't gather diagnostics — please send log.txt instead "
+                "(Open log folder)."
+            )
+            return
+        QGuiApplication.clipboard().setText(text)
+        line_count = len(text.splitlines())
+        self._diagnostics_status.setText(
+            f"Copied {line_count} lines to your clipboard — paste them into your "
+            "message with Ctrl+V."
+        )
+        # Cleared so a stale "Copied" line doesn't sit there next time the
+        # window is opened and make it look like it just happened.
+        QTimer.singleShot(15000, lambda: self._diagnostics_status.setText(""))
 
     def _open_log_folder(self) -> None:
         folder = os.path.dirname(logs.log_path())

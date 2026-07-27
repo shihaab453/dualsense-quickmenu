@@ -64,6 +64,10 @@ class DualSenseListener:
         self._on_connection_change = on_connection_change
         self._running = False
         self._thread = None
+        # Explicit rather than inferred from battery_percent being None: the
+        # diagnostics report needs to state plainly whether a controller was
+        # ever seen, and "battery is unknown" isn't the same question.
+        self.connected = False
         self.battery_percent = None  # None while disconnected
         # Current (not just edge-triggered) button state — e.g. so the menu
         # can tell "is Cross currently held" while a D-pad press also comes
@@ -114,11 +118,13 @@ class DualSenseListener:
                 continue
 
             logged_absent = False
+            self.connected = True
             log.info("DualSense connected")
             self._emit_connection(True)
             try:
                 self._poll(ds)
             finally:
+                self.connected = False
                 self.battery_percent = None
                 self.held = {name: False for name in _BUTTONS.values()}
                 log.info("DualSense disconnected")

@@ -97,7 +97,17 @@ def setup() -> None:
     threading.excepthook = _thread_excepthook
     _install_qt_handler()
 
-    get(__name__).info("=== app start (pid %s) ===", os.getpid())
+    # The version goes in the banner so a log pasted into a bug report always
+    # says which build produced it.
+    import version
+
+    get(__name__).info(
+        "=== %s %s start (pid %s, frozen=%s) ===",
+        version.APP_NAME,
+        version.VERSION,
+        os.getpid(),
+        getattr(sys, "frozen", False),
+    )
 
 
 def _excepthook(exc_type, exc_value, exc_tb) -> None:

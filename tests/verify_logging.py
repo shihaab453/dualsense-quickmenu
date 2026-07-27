@@ -44,7 +44,13 @@ print("\n[setup]")
 logs.setup()
 check("log file created", os.path.exists(logs.log_path()))
 check("log path is inside the settings dir", logs.log_path().startswith(_TMP))
-check("start banner written", "app start" in log_text())
+import version
+
+# The banner has to carry the version: a log pasted into a bug report is
+# useless if it doesn't say which build produced it.
+check("start banner written", "start" in log_text())
+check("start banner names the version", version.VERSION in log_text(),
+      f"(looking for {version.VERSION!r})")
 check("setup() is idempotent", (logs.setup() or True))
 check(
     "no duplicate handlers after a second setup()",

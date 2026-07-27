@@ -28,6 +28,11 @@ _LEGACY_GAMES_PATH = os.path.join(
 _DEFAULTS = {
     "spotify_client_id": "",
     "pinned_games": [],
+    # False until the app has completed one startup. Drives the first-run
+    # experience: the app has no window of its own, so without something
+    # happening on first launch, double-clicking it looks like nothing
+    # installed.
+    "has_launched": False,
 }
 
 
@@ -101,6 +106,14 @@ def get_spotify_client_id() -> str:
 
 def set_spotify_client_id(client_id: str) -> None:
     _update("spotify_client_id", (client_id or "").strip())
+
+
+def is_first_run() -> bool:
+    return not load().get("has_launched", False)
+
+
+def mark_launched() -> None:
+    _update("has_launched", True)
 
 
 def get_pinned_games() -> list:

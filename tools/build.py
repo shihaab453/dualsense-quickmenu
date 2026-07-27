@@ -26,25 +26,38 @@ def step(text: str) -> None:
     print(f"\n=== {text} ===")
 
 
-def _print_selftest_from_log() -> None:
-    """Echoes the most recent run's selftest lines out of log.txt."""
+def _log_path() -> str:
     sys.path.insert(0, _ROOT)
     import logs
 
+    return logs.log_path()
+
+
+def _log_size() -> int:
+    """Byte length of the log right now, to read back only what a later step
+    appends. Deliberately not "scan backwards for the start-of-run banner":
+    that couples this script to the exact wording of a log line somewhere else,
+    and silently prints every previous run's results once the wording changes
+    (which is exactly what happened)."""
     try:
-        with open(logs.log_path(), "r", encoding="utf-8") as f:
-            lines = f.read().splitlines()
+        return os.path.getsize(_log_path())
+    except OSError:
+        return 0
+
+
+def _print_selftest_since(offset: int) -> None:
+    """Echoes selftest lines appended to the log after the given byte offset."""
+    try:
+        size = os.path.getsize(_log_path())
+        # Rotation between the two reads would leave the offset past the end.
+        with open(_log_path(), "rb") as f:
+            f.seek(offset if offset <= size else 0)
+            text = f.read().decode("utf-8", errors="replace")
     except OSError as e:
         print(f"  (couldn't read the log: {e})")
         return
 
-    # Only the lines since the last app start, so an earlier run's results
-    # can't be mistaken for this one's.
-    for index in range(len(lines) - 1, -1, -1):
-        if "app start" in lines[index]:
-            lines = lines[index:]
-            break
-    for line in lines:
+    for line in text.splitlines():
         if "selftest:" in line:
             print("  " + line.split("selftest:", 1)[1].strip())
 
@@ -65,11 +78,12 @@ def main() -> int:
         return 1
 
     step("selftest against the built exe")
-    result = subprocess.run([_EXE, "--selftest"], cwd=_DIST)
     # Read the results back out of the log rather than relying on the exe's
     # stdout: it's a windowed build with no console of its own, so whether
     # anything reaches this terminal depends on how we were invoked.
-    _print_selftest_from_log()
+    log_offset = _log_size()
+    result = subprocess.run([_EXE, "--selftest"], cwd=_DIST)
+    _print_selftest_since(log_offset)
     if result.returncode != 0:
         print("\nSELFTEST FAILED — not packaging this build.")
         return result.returncode

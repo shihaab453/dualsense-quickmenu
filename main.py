@@ -8,14 +8,21 @@
 import os
 import sys
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QIcon
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import (
+    QApplication,
+    QMenu,
+    QMessageBox,
+    QSystemTrayIcon,
+)
 
 import logs
 import resources
 import settings
 import settings_window
+import single_instance
+import version
 from controller import DualSenseListener
 from icons import render_app_icon
 from overlay import OverlayWindow
@@ -89,6 +96,7 @@ def _selftest() -> int:
         results.append(ok)
         emit(f"  {'PASS' if ok else 'FAIL'}  {label}{'  ' + detail if detail else ''}")
 
+    emit(f"{version.APP_NAME} {version.VERSION}")
     emit(f"frozen={resources.is_frozen()}  assets={resources.base_dir()}")
 
     check("bundled Manrope font loads", _load_app_font())
@@ -133,6 +141,30 @@ def _selftest() -> int:
     return 0 if passed else 1
 
 
+def _run_first_launch(tray: QSystemTrayIcon) -> None:
+    """What happens the very first time the app is ever started.
+
+    Without this, launching it does nothing visible: there's no window, just a
+    new icon in a tray that's often collapsed behind the ^ arrow. Someone who
+    hasn't been told it's a tray app has no way to know it worked, and the two
+    things they need to do next (connect Spotify, add games) are both in a
+    window they don't know exists. So: say it's running, and open that window.
+    """
+    log.info("First launch — showing the welcome notification and opening Settings")
+    tray.showMessage(
+        f"{version.APP_NAME} is running",
+        "It lives in your system tray. Press the PS button on your controller "
+        "to open the overlay, or right-click this icon for settings.",
+        QIcon(render_app_icon(64)),
+        10000,
+    )
+    # Deferred rather than called directly: the tray notification should be on
+    # screen before a window steals attention, and Qt hasn't drawn it yet at
+    # this point in startup.
+    QTimer.singleShot(1200, settings_window.open_settings)
+    settings.mark_launched()
+
+
 def main() -> None:
     # First, before anything that could fail: under pythonw.exe there's no
     # console, so without this an early crash leaves no trace at all.
@@ -144,9 +176,29 @@ def main() -> None:
         # Needs a QApplication (Qt refuses to render a pixmap without one) but
         # no window, tray icon or controller thread.
         sys.exit(_selftest())
+
     # We live in the tray: closing/hiding the overlay must not quit the app.
     app.setQuitOnLastWindowClosed(False)
     _load_app_font()
+
+    if single_instance.already_running():
+        # Told, not silently ignored: the app has no window, so someone who
+        # double-clicked twice would otherwise see nothing happen a second time
+        # and reasonably conclude it's broken. This also teaches them where it
+        # actually lives.
+        log.info("Another instance is already running — showing a notice and exiting")
+        box = QMessageBox()
+        box.setWindowTitle(version.APP_NAME)
+        box.setIcon(QMessageBox.Information)
+        box.setText(f"{version.APP_NAME} is already running.")
+        box.setInformativeText(
+            "Look for the blue “PS” icon in your system tray (bottom-right of "
+            "the taskbar, possibly under the ^ arrow). Right-click it for the "
+            "menu and settings."
+        )
+        box.setWindowIcon(QIcon(render_app_icon(64)))
+        box.exec()
+        sys.exit(0)
 
     bridge = ControllerBridge()
     listener = DualSenseListener(
@@ -161,7 +213,7 @@ def main() -> None:
     bridge.connection_changed.connect(overlay.set_controller_connected)
 
     tray = QSystemTrayIcon(_make_tray_icon())
-    tray.setToolTip("DualSense Quick Menu")
+    tray.setToolTip(f"{version.APP_NAME} {version.VERSION}")
     tray_menu = QMenu()
     tray_menu.addAction("Show menu").triggered.connect(overlay.open_menu)
     # First-run setup (Spotify client ID, Task Switcher games) can't happen on
@@ -170,6 +222,9 @@ def main() -> None:
     tray_menu.addAction("Quit").triggered.connect(app.quit)
     tray.setContextMenu(tray_menu)
     tray.show()
+
+    if settings.is_first_run():
+        _run_first_launch(tray)
 
     if "--demo" in sys.argv:
         overlay.open_menu()

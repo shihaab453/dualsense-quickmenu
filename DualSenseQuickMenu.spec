@@ -32,8 +32,47 @@
 
 import importlib.util
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_submodules
+
+sys.path.insert(0, os.path.abspath(SPECPATH))
+import version as app_version
+
+
+def _write_version_resource() -> str:
+    """Writes the Windows version resource so right-click -> Properties ->
+    Details on the exe shows the build. Generated from version.py rather than
+    kept as a committed file, so the version can't be bumped in one place and
+    stay stale in the other."""
+    major, minor, patch, build = app_version.numeric_version()
+    text = f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({major}, {minor}, {patch}, {build}),
+    prodvers=({major}, {minor}, {patch}, {build}),
+    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('FileDescription', {app_version.APP_NAME!r}),
+      StringStruct('FileVersion', {app_version.VERSION!r}),
+      StringStruct('ProductName', {app_version.APP_NAME!r}),
+      StringStruct('ProductVersion', {app_version.VERSION!r}),
+      StringStruct('OriginalFilename', 'DualSenseQuickMenu.exe'),
+    ])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
+    os.makedirs(workpath, exist_ok=True)
+    out_path = os.path.join(workpath, "version_info.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return out_path
+
+
+version_resource = _write_version_resource()
 
 # find_spec rather than import: locating the package shouldn't trigger
 # pydualsense's import-time dlopen of hidapi.dll.
@@ -93,6 +132,7 @@ exe = EXE(
     # it would have printed goes to log.txt instead (see logs.py).
     console=False,
     icon="assets/icon.ico",
+    version=version_resource,
 )
 
 # One directory, not one file. A onefile build unpacks all of Qt into a temp

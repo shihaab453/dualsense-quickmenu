@@ -49,6 +49,11 @@ icon's **Show menu**, or `--demo`, to open it).
 2. Plug in the DualSense with a **USB cable** (Bluetooth not supported yet).
 3. Run `DualSenseQuickMenu.exe`. No Python needed.
 
+The first time you run it, a notification confirms it's running and the Settings
+window opens so you can connect Spotify and add games. After that it starts
+silently into the tray — if you run it again while it's already running, it'll
+just point you back at the tray icon.
+
 The app lives in the system tray (blue "PS" icon) — right-click it for
 **Show menu**, **Settings…** and **Quit**. Windows may show a
 "Windows protected your PC" SmartScreen warning the first time, because the
@@ -181,7 +186,8 @@ reacting to the D-pad; closing the menu gives focus straight back.
 **Start here for anything not listed below.** The app writes what went wrong to
 a log file — right-click the tray icon → **Settings…** → **Open log folder**,
 and look at `log.txt` (or send it along when reporting a problem). Nothing is
-uploaded anywhere automatically.
+uploaded anywhere automatically. The version is shown at the bottom of the
+Settings window; include it when reporting anything.
 
 - **PS button does nothing** — make sure the controller is on USB and that no
   other tool (DS4Windows, Steam with "PlayStation Controller Support" enabled)

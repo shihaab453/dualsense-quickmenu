@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 import logs
 import settings
+import version
 from actions import spotify_client as sp
 
 log = logs.get(__name__)
@@ -125,6 +126,11 @@ class SettingsWindow(QDialog):
         self._build_troubleshooting_section(lay)
 
         close_row = QHBoxLayout()
+        # Shown here so a tester can read the build off the screen when
+        # reporting something, without digging through the log.
+        version_label = QLabel(f"{version.APP_NAME} {version.VERSION}")
+        version_label.setObjectName("hint")
+        close_row.addWidget(version_label)
         close_row.addStretch(1)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.close)

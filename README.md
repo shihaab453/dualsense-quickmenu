@@ -21,8 +21,9 @@ between them, Cross to open one, Circle to back out, PS again to close):
   whatever's currently playing — prefers Spotify if you're logged in,
   otherwise falls back to whatever Windows itself is tracking (works with
   browsers, other players, etc).
-- **Chats & Calls** and the other home cards are decorative, matching the
-  original PS5 UI they're modeled on — no function behind them.
+- **Chats & Calls** isn't built yet — the icon is there, and opening it says so.
+  The home cards other than Now Playing are decorative, matching the original
+  PS5 UI they're modeled on.
 
 ## Controls
 
@@ -190,8 +191,28 @@ anywhere automatically.
 
 ## Not yet supported (planned)
 
+Chats & Calls (the tray icon exists and says it's under construction),
 Bluetooth, Discord controls, switching
 audio output/input device (vs. just showing the current one — needs an
 undocumented Windows COM interface), the nested Shuffle/Repeat sub-menu from
 the original PS5 UI (this app uses direct one-press toggle/cycle buttons
 instead, which is functionally equivalent).
+
+## Licence
+
+Copyright (C) 2026 shihaab453.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the **GNU General Public License, version 3** or (at your option)
+any later version. The full text is in [LICENSE](LICENSE).
+
+It is distributed in the hope that it will be useful, but **without any
+warranty** — without even the implied warranty of merchantability or fitness for
+a particular purpose. See the licence for details.
+
+In short: you're free to use, study, change and share this, but anything you
+distribute that's built on it has to be free software under the same licence
+too.
+
+Bundled dependencies keep their own licences — notably PySide6 (Qt for Python),
+which is LGPL v3.

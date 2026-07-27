@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from icons import render_battery_pill, render_icon
 from nav import NavStack, RowList
 from panels.base import Tile
+from panels.chats import ChatsPanel
 from panels.music import MusicPanel
 from panels.nowplaying import NowPlayingPanel
 from panels.power import PowerPanel
@@ -44,6 +45,7 @@ _TRAY_ICONS = [
 ]
 
 _PANEL_CLASSES = {
+    "chats": ChatsPanel,
     "music": MusicPanel,
     "sound": SoundPanel,
     "power": PowerPanel,
@@ -282,8 +284,6 @@ class OverlayWindow(QWidget):
         key = _TRAY_ICONS[index][0]
         if key == "home":
             self.close_menu()
-        elif key == "chats":
-            pass  # decorative in the mockup too — no panel wired
         else:
             self._open_panel(key)
 

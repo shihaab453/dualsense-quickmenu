@@ -210,6 +210,36 @@ def after_power_open():
     check("the last tray icon opens Power", type(panel).__name__ == "PowerPanel",
           f"(got {type(panel).__name__})")
     overlay.close_menu()
+    QTimer.singleShot(20, check_chats)
+
+
+def check_chats():
+    # The Chats icon used to do literally nothing when pressed, which reads as
+    # broken. It must now open a panel saying the feature isn't built.
+    overlay.open_menu()
+    overlay.handle_button("right")  # tray index 1 == chats
+    overlay.handle_button("cross")
+    QTimer.singleShot(120, after_chats_open)
+
+
+def after_chats_open():
+    panel = overlay._active_panel
+    check("Chats icon opens a panel", type(panel).__name__ == "ChatsPanel",
+          f"(got {type(panel).__name__ if panel else None})")
+    texts = " ".join(
+        child.text() for child in panel.findChildren(type(panel.heading))
+    )
+    check("it says the feature is under construction",
+          "under construction" in texts, f"(got {texts!r})")
+
+    # No rows, so Circle must still get the user out rather than trapping them.
+    overlay.handle_button("cross")   # nothing to activate; must not crash
+    overlay.handle_button("down")    # no rows to move between; must not crash
+    overlay.handle_button("circle")
+    check("Circle backs out of a panel with no rows", overlay._active_panel is None)
+    check("and the overlay is still open at the tray", overlay.isVisible())
+
+    overlay.close_menu()
     QTimer.singleShot(20, check_settings_window)
 
 

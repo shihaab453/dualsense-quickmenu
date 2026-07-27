@@ -120,10 +120,18 @@ class SettingsWindow(QDialog):
         self._build_troubleshooting_section(lay)
 
         close_row = QHBoxLayout()
-        # Shown here so a tester can read the build off the screen when
-        # reporting something, without digging through the log.
-        version_label = QLabel(f"{version.APP_NAME} {version.VERSION}")
+        # The version is here so a tester can read the build off the screen when
+        # reporting something, without digging through the log. The licence line
+        # is here because the GPL asks an interactive program to surface it at
+        # the interface, not only in the LICENSE file.
+        version_label = QLabel(
+            f"{version.APP_NAME} {version.VERSION} · {version.COPYRIGHT} · "
+            f'<a style="color: rgba(255,255,255,0.55);" '
+            f'href="{version.LICENSE_URL}">{version.LICENSE_NAME}</a>'
+        )
         version_label.setObjectName("hint")
+        version_label.setTextFormat(Qt.RichText)
+        version_label.setOpenExternalLinks(True)
         close_row.addWidget(version_label)
         close_row.addStretch(1)
         close_button = QPushButton("Close")

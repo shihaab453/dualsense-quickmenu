@@ -63,7 +63,7 @@ check("a fresh install reports first run", settings.is_first_run() is True)
 settings.mark_launched()
 check("no longer first run after mark_launched", settings.is_first_run() is False)
 check("the flag survives an unrelated settings write",
-      (settings.set_pinned_games([{"name": "G", "path": "g.exe"}]),
+      (settings.set_spotify_client_id("a" * 32),
        settings.is_first_run() is False)[1])
 check("marking twice is harmless",
       (settings.mark_launched(), settings.is_first_run() is False)[1])

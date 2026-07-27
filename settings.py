@@ -18,16 +18,8 @@ log = logs.get(__name__)
 _DIR_NAME = "DualSenseQuickMenu"
 _FILE_NAME = "settings.json"
 
-# Where the games list used to live, before it moved to %APPDATA%. Read once,
-# on the first run after this change, so an existing install doesn't silently
-# lose games the user already configured by hand.
-_LEGACY_GAMES_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "config", "pinned_games.json"
-)
-
 _DEFAULTS = {
     "spotify_client_id": "",
-    "pinned_games": [],
     # False until the app has completed one startup. Drives the first-run
     # experience: the app has no window of its own, so without something
     # happening on first launch, double-clicking it looks like nothing
@@ -63,23 +55,16 @@ def _read_json(path: str):
 
 
 def load() -> dict:
-    """Every setting, with defaults filled in for anything not stored yet."""
+    """Every setting, with defaults filled in for anything not stored yet.
+
+    Unrecognised keys in an existing settings.json are kept as-is rather than
+    pruned — a settings file written by an older version may hold entries for
+    features since removed (`pinned_games`, from the Task Switcher), and they're
+    inert."""
     values = dict(_DEFAULTS)
     stored = _read_json(settings_path())
     if isinstance(stored, dict):
         values.update(stored)
-        return values
-
-    # No usable settings file yet — adopt the old in-repo games list if there
-    # is one, then persist it so this migration only ever runs once.
-    legacy = _read_json(_LEGACY_GAMES_PATH)
-    if isinstance(legacy, list) and legacy:
-        values["pinned_games"] = legacy
-        try:
-            save(values)
-        except OSError:
-            # Can't write yet — fine, we'll re-migrate next launch.
-            log.exception("Couldn't persist the migrated games list")
     return values
 
 
@@ -114,12 +99,3 @@ def is_first_run() -> bool:
 
 def mark_launched() -> None:
     _update("has_launched", True)
-
-
-def get_pinned_games() -> list:
-    games = load().get("pinned_games")
-    return games if isinstance(games, list) else []
-
-
-def set_pinned_games(games: list) -> None:
-    _update("pinned_games", list(games))

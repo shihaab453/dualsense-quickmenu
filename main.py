@@ -147,9 +147,9 @@ def _run_first_launch(tray: QSystemTrayIcon) -> None:
 
     Without this, launching it does nothing visible: there's no window, just a
     new icon in a tray that's often collapsed behind the ^ arrow. Someone who
-    hasn't been told it's a tray app has no way to know it worked, and the two
-    things they need to do next (connect Spotify, add games) are both in a
-    window they don't know exists. So: say it's running, and open that window.
+    hasn't been told it's a tray app has no way to know it worked, and the thing
+    they need to do next (connect Spotify) is in a window they don't know
+    exists. So: say it's running, and open that window.
     """
     log.info("First launch — showing the welcome notification and opening Settings")
     tray.showMessage(
@@ -224,8 +224,8 @@ def main() -> None:
     tray.setToolTip(f"{version.APP_NAME} {version.VERSION}")
     tray_menu = QMenu()
     tray_menu.addAction("Show menu").triggered.connect(overlay.open_menu)
-    # First-run setup (Spotify client ID, Task Switcher games) can't happen on
-    # the D-pad-driven overlay — see settings_window's module docstring.
+    # First-run setup (the Spotify client ID) can't happen on the D-pad-driven
+    # overlay — see settings_window's module docstring.
     tray_menu.addAction("Settings…").triggered.connect(settings_window.open_settings)
     tray_menu.addAction("Quit").triggered.connect(app.quit)
     tray.setContextMenu(tray_menu)

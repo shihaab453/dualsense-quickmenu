@@ -1,9 +1,9 @@
 # DualSense Quick Menu
 
 A PS5-style Control Center for Windows. Press the **PS button** on your
-DualSense while gaming and an overlay appears — control Spotify, change the
-volume, sleep/shut down/restart the PC, and switch between your games — all
-with the controller, without touching your keyboard or mouse.
+DualSense while gaming and an overlay appears — browse and control Spotify,
+change the volume, and sleep/shut down/restart the PC — all with the
+controller, without touching your keyboard or mouse.
 
 ## What's in it
 
@@ -16,8 +16,6 @@ between them, Cross to open one, Circle to back out, PS again to close):
   accounts can browse but Spotify itself blocks remote control).
 - **Sound** — output/input device names, master volume, mic mute, mic
   volume.
-- **Task Switcher** — jump back into a game, or launch one from a list you
-  configure (see below).
 - **Power** — Sleep, Shut Down, Restart.
 - A **Now Playing** card on the home screen (D-pad up from the tray) shows
   whatever's currently playing — prefers Spotify if you're logged in,
@@ -50,7 +48,7 @@ icon's **Show menu**, or `--demo`, to open it).
 3. Run `DualSenseQuickMenu.exe`. No Python needed.
 
 The first time you run it, a notification confirms it's running and the Settings
-window opens so you can connect Spotify and add games. After that it starts
+window opens so you can connect Spotify. After that it starts
 silently into the tray — if you run it again while it's already running, it'll
 just point you back at the tray icon.
 
@@ -63,7 +61,7 @@ To start it automatically when you log in, right-click `DualSenseQuickMenu.exe`
 → **Create shortcut**, then move that shortcut into `shell:startup`
 (Win+R, type `shell:startup`).
 
-Then follow **Spotify setup** and **Task Switcher setup** below.
+Then follow **Spotify setup** below.
 
 ### Option B — run from source
 
@@ -78,8 +76,8 @@ Then follow **Spotify setup** and **Task Switcher setup** below.
    .venv\Scripts\python.exe main.py
    ```
    The app lives in the system tray (blue "PS" icon). Right-click it for
-   **Show menu** (useful without a controller), **Settings…** (Spotify and
-   Task Switcher setup) and **Quit**.
+   **Show menu** (useful without a controller), **Settings…** (Spotify setup
+   and troubleshooting) and **Quit**.
 
    `main.py --demo` opens the menu immediately on launch, for testing.
 
@@ -150,27 +148,6 @@ Playback control (play/pause/skip/shuffle/repeat/liking songs) requires
 playlists, but attempting to play something shows an inline message
 explaining why instead of failing silently.
 
-## Task Switcher setup
-
-Windows has no equivalent of the PS5's "recently played games" list, so the
-Switcher panel is backed by a list you maintain yourself. Right-click the tray
-icon → **Settings…** → **Task Switcher games** → **Add game…**, then pick the
-game's `.exe` and give it a display name.
-
-Point each entry at the game's **own .exe**, not a shortcut — that's what lets
-the overlay notice when a game is already running.
-
-Every game listed here always shows under **Pinned Games**. Whichever of
-them are *currently running* also show under **Recent Games** (detected by
-matching the running process name against each entry's `path` — no
-Steam/Epic-specific integration needed). Pressing Cross on a row launches
-that game's exe. If it's already running, what happens depends on the game
-itself (most single-instance games just bring themselves to the front; this
-app doesn't do anything special to force that).
-
-Finding a game's exe path: right-click its shortcut (Desktop, Start Menu, or
-inside its launcher) → **Properties** → the **Target** field.
-
 ## Important: game display mode
 
 Overlays cannot draw on top of *exclusive fullscreen* games. Set your game
@@ -213,8 +190,7 @@ anywhere automatically.
 
 ## Not yet supported (planned)
 
-Bluetooth, Steam-launched games in the Task Switcher, Discord controls,
-real game box art (color-coded placeholders are used instead), switching
+Bluetooth, Discord controls, switching
 audio output/input device (vs. just showing the current one — needs an
 undocumented Windows COM interface), the nested Shuffle/Repeat sub-menu from
 the original PS5 UI (this app uses direct one-press toggle/cycle buttons

@@ -30,22 +30,22 @@ from panels.music import MusicPanel
 from panels.nowplaying import NowPlayingPanel
 from panels.power import PowerPanel
 from panels.sound import SoundPanel
-from panels.switcher import SwitcherPanel
 
-# (key, glyph, hover label) — left to right, matching the mockup.
+# (key, hover label) — left to right. The mockup has a sixth icon here, a Task
+# Switcher (pinned/recently-played games); it was built and then removed once it
+# turned out not to serve what this app is for. Panel indices are derived from
+# this list, so removing an entry is all that's needed.
 _TRAY_ICONS = [
     ("home", "Close Control Centre"),
     ("chats", "Chats & Calls"),
     ("music", "Music"),
     ("sound", "Sound"),
-    ("switcher", "Task Switcher"),
     ("power", "Power"),
 ]
 
 _PANEL_CLASSES = {
     "music": MusicPanel,
     "sound": SoundPanel,
-    "switcher": SwitcherPanel,
     "power": PowerPanel,
     "nowplaying": NowPlayingPanel,
 }

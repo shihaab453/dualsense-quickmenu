@@ -30,7 +30,7 @@ _SONG_LABEL_WIDTH = 460 - 36 - 36 - _ART_SIZE - 14
 class NowPlayingPanel(Panel):
     def __init__(self):
         super().__init__("Now playing on Music", width=460)
-        # Smaller/lighter than Sound/Power/Switcher's 32px bold titles —
+        # Smaller/lighter than Sound/Power's 32px bold titles —
         # matches the mockup's own header style for this panel (19px/600).
         self.heading.setStyleSheet("font-size: 19px; font-weight: 600;")
 

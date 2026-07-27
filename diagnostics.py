@@ -22,7 +22,6 @@ import re
 import sys
 
 import logs
-import settings
 import version
 from actions import spotify_client as sp
 
@@ -116,11 +115,6 @@ def report() -> str:
     except Exception:
         pyside_version = "unknown"
 
-    try:
-        game_count = len(settings.get_pinned_games())
-    except Exception:
-        game_count = "unknown"
-
     lines = [
         f"{version.APP_NAME} {version.VERSION}",
         f"Build: {'packaged' if getattr(sys, 'frozen', False) else 'from source'}",
@@ -129,7 +123,6 @@ def report() -> str:
         "",
         f"Controller: {_controller_line()}",
         f"Spotify: {_spotify_line()}",
-        f"Games configured: {game_count}",
         f"Log file: {_redact(logs.log_path())}",
     ]
 

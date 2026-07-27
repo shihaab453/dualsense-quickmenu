@@ -216,7 +216,7 @@ class MusicPanel(Panel):
         # The one panel the mockup positions left-anchored instead of
         # centered under its tray icon — see OverlayWindow._relayout().
         self.anchor = "left"
-        # Music's header is smaller than Sound/Power/Switcher's in the
+        # Music's header is smaller than Sound/Power's in the
         # mockup (24px vs 32px) since it sits next to a small app icon.
         self.heading.setStyleSheet("font-size: 24px; font-weight: 700;")
 

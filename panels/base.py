@@ -57,7 +57,7 @@ class Tile(QLabel):
 
 def selected_row_style(selected: bool, radius: int = 14) -> str:
     """The focus treatment every selectable row across every panel (Sound,
-    Power, Music, Switcher) uses for the current D-pad selection — one
+    Power, Music) uses for the current D-pad selection — one
     shared implementation instead of four near-identical copies. Matches
     the mockup's selected-row rule (border + a faint background tint); the
     mockup also adds a soft green box-shadow glow around the border, which
@@ -96,7 +96,7 @@ class Panel(QFrame):
         outer.setContentsMargins(36, 28, 36, 28)
         outer.setSpacing(18)
 
-        # Default matches Sound/Power/Switcher's title size (32px/700 in the
+        # Default matches Sound/Power's title size (32px/700 in the
         # mockup); Music and Now Playing use smaller headers with a leading
         # icon and override self.heading's style after calling super().
         self.heading = None

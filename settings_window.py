@@ -1,12 +1,12 @@
 # A normal desktop window for the things the controller overlay fundamentally
 # can't do.
 #
-# Why this exists at all: the overlay is driven entirely by a D-pad, and two
-# pieces of first-run setup can't be done that way. A Spotify client ID is 32
-# hex characters — there is no sane way to type that with a D-pad — and adding
-# a game means browsing the filesystem for an .exe. Both are one-time, at-the-
-# desktop tasks, so they live here instead: opened from the tray icon, or by
-# pressing Cross on the Music panel's "Set up Spotify" row.
+# Why this exists at all: the overlay is driven entirely by a D-pad, and a
+# Spotify client ID is 32 hex characters — there is no sane way to type that
+# with a D-pad. It's a one-time, at-the-desktop task, so it lives here instead:
+# opened from the tray icon, or by pressing Cross on the Music panel's
+# "Set up Spotify" row. The troubleshooting section is here for the same reason
+# — copying text to the clipboard and opening a folder aren't controller jobs.
 #
 # Nothing here pushes changes into the overlay. Every panel re-reads its data
 # in build_nav(), which runs each time that panel is opened (see HANDOFF.md's
@@ -19,14 +19,10 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -95,11 +91,10 @@ class SettingsWindow(QDialog):
         self.setStyleSheet("#settingsDialog { background: #15151c; }")
         self.setMinimumWidth(640)
 
-        # The content sits in a scroll area because the full explanation plus
-        # the games list is taller than the usable height of a 1080p screen,
-        # and this ships to machines whose resolution we don't know. Static
-        # content built once in __init__, so none of the deferred-measurement
-        # trouble in panels/base.py's fit_scroll_to_content applies here.
+        # The content sits in a scroll area because it ships to machines whose
+        # resolution we don't know, and the Spotify walkthrough alone is tall.
+        # Static content built once in __init__, so none of the deferred-
+        # measurement trouble in panels/base.py's fit_scroll_to_content applies.
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
@@ -121,8 +116,6 @@ class SettingsWindow(QDialog):
         lay.setSpacing(14)
 
         self._build_spotify_section(lay)
-        lay.addWidget(_divider())
-        self._build_games_section(lay)
         lay.addWidget(_divider())
         self._build_troubleshooting_section(lay)
 
@@ -269,88 +262,6 @@ class SettingsWindow(QDialog):
             f"{saved_message} {state}".strip() if saved_message else state
         )
 
-    # ---- Games ----
-
-    def _build_games_section(self, lay: QVBoxLayout) -> None:
-        title = QLabel("Task Switcher games")
-        title.setObjectName("sectionTitle")
-        lay.addWidget(title)
-
-        hint = QLabel(
-            "Games you add here show up in the Task Switcher panel. Point each "
-            "one at the game's own .exe rather than a shortcut — that's what "
-            "lets the overlay notice when a game is already running and list "
-            "it under Recent."
-        )
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
-
-        self._games_list = QListWidget()
-        # Capped rather than free-growing: it's the only expanding widget here,
-        # so without a maximum it swallows all the window's spare height and
-        # leaves a mostly-empty box.
-        self._games_list.setMinimumHeight(110)
-        self._games_list.setMaximumHeight(150)
-        self._games_list.currentRowChanged.connect(self._update_games_buttons)
-        lay.addWidget(self._games_list)
-
-        buttons = QHBoxLayout()
-        add_button = QPushButton("Add game…")
-        add_button.setObjectName("primary")
-        add_button.clicked.connect(self._add_game)
-        buttons.addWidget(add_button)
-        self._remove_button = QPushButton("Remove selected")
-        self._remove_button.clicked.connect(self._remove_game)
-        buttons.addWidget(self._remove_button)
-        buttons.addStretch(1)
-        lay.addLayout(buttons)
-
-    def _add_game(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose the game's .exe",
-            "",
-            "Programs (*.exe);;All files (*)",
-        )
-        if not path:
-            return
-        default_name = os.path.splitext(os.path.basename(path))[0]
-        name, ok = QInputDialog.getText(
-            self,
-            "Game name",
-            "Name to show in the Task Switcher:",
-            QLineEdit.Normal,
-            default_name,
-        )
-        if not ok or not name.strip():
-            return
-        games = settings.get_pinned_games()
-        games.append({"name": name.strip(), "path": os.path.normpath(path)})
-        settings.set_pinned_games(games)
-        self._reload_games()
-
-    def _remove_game(self) -> None:
-        row = self._games_list.currentRow()
-        games = settings.get_pinned_games()
-        if 0 <= row < len(games):
-            del games[row]
-            settings.set_pinned_games(games)
-            self._reload_games()
-
-    def _reload_games(self) -> None:
-        self._games_list.clear()
-        for game in settings.get_pinned_games():
-            item = QListWidgetItem(game.get("name") or "(unnamed)")
-            item.setToolTip(game.get("path", ""))
-            self._games_list.addItem(item)
-        self._update_games_buttons()
-
-    def _update_games_buttons(self, *_) -> None:
-        # Takes *_ because it's connected to currentRowChanged, which emits the
-        # new row index, as well as being called directly with no arguments.
-        self._remove_button.setEnabled(self._games_list.currentRow() >= 0)
-
     # ---- troubleshooting ----
 
     def _build_troubleshooting_section(self, lay: QVBoxLayout) -> None:
@@ -419,7 +330,6 @@ class SettingsWindow(QDialog):
         """Re-reads everything from disk. Called each time the window is
         opened, so it never shows state left over from a previous visit."""
         self._refresh_spotify_status()
-        self._reload_games()
 
 
 _window = None

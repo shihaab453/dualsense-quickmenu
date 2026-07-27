@@ -27,8 +27,18 @@ settings.data_dir = lambda: _TMP
 
 import logs
 import settings_window
-from actions import games
 from actions import spotify_client as sp
+
+# This script opens the Power panel to confirm the tray still maps to the right
+# panels after the Task Switcher was removed. Neutered before any panel can be
+# constructed, per HANDOFF.md's testing note — panels are built lazily, so
+# patching the module attribute now is enough, and nothing here can suspend or
+# reboot the machine.
+from actions import power as _power
+
+_power.sleep = lambda: None
+_power.shut_down = lambda: None
+_power.restart = lambda: None
 
 # Routed into the temp dir by the data_dir patch above, so the last section can
 # check that panel failures really do reach the log file.
@@ -48,7 +58,6 @@ def check(label, condition, detail=""):
 # ---------------------------------------------------------------- settings.py
 print("\n[settings store]")
 check("fresh install has no client ID", settings.get_spotify_client_id() == "")
-check("fresh install has no games", settings.get_pinned_games() == [])
 
 settings.set_spotify_client_id("0a1b2c3d4e5f60718293a4b5c6d7e8f9")
 check(
@@ -56,10 +65,6 @@ check(
     settings.get_spotify_client_id() == "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
 )
 check("settings.json written to the temp dir", os.path.exists(settings.settings_path()))
-
-settings.set_pinned_games([{"name": "Elden Ring", "path": r"C:\g\eldenring.exe"}])
-check("games round-trip", settings.get_pinned_games()[0]["name"] == "Elden Ring")
-check("client ID survives a games write", settings.get_spotify_client_id() != "")
 
 # Whitespace is the most likely paste artifact.
 settings.set_spotify_client_id("  0a1b2c3d4e5f60718293a4b5c6d7e8f9\n")
@@ -71,29 +76,18 @@ check(
 # A corrupt file must degrade to defaults, not raise.
 with open(settings.settings_path(), "w", encoding="utf-8") as f:
     f.write("{ this is not json")
-check("corrupt settings.json falls back to defaults", settings.load()["pinned_games"] == [])
+check("corrupt settings.json falls back to defaults",
+      settings.load()["spotify_client_id"] == "")
 check("corrupt settings.json doesn't crash get_spotify_client_id",
       settings.get_spotify_client_id() == "")
 
-# ------------------------------------------------------------ legacy migration
-print("\n[migration from config/pinned_games.json]")
-legacy_dir = tempfile.mkdtemp(prefix="dsqm_legacy_")
-legacy_path = os.path.join(legacy_dir, "pinned_games.json")
-with open(legacy_path, "w", encoding="utf-8") as f:
-    json.dump([{"name": "Old Game", "path": r"C:\g\old.exe"}], f)
-
-fresh = tempfile.mkdtemp(prefix="dsqm_fresh_")
-settings.data_dir = lambda: fresh
-settings._LEGACY_GAMES_PATH = legacy_path
-check("legacy games list is adopted", settings.get_pinned_games()[0]["name"] == "Old Game")
-check("migration persisted settings.json", os.path.exists(settings.settings_path()))
-settings._LEGACY_GAMES_PATH = os.path.join(legacy_dir, "does_not_exist.json")
-
-# Back to the main temp dir for the rest.
-settings.data_dir = lambda: _TMP
-settings.set_pinned_games([{"name": "Elden Ring", "path": r"C:\g\eldenring.exe"}])
-check("games.py reads through settings", games.get_pinned_games()[0]["name"] == "Elden Ring")
-check("no running process matches a fake path", games.get_recent_games() == [])
+# An unrecognised key (e.g. pinned_games, left behind by the removed Task
+# Switcher) must be carried through rather than making the file unreadable.
+with open(settings.settings_path(), "w", encoding="utf-8") as f:
+    json.dump({"spotify_client_id": "f" * 32, "pinned_games": [{"name": "old"}]}, f)
+check("a leftover key from a removed feature is harmless",
+      settings.get_spotify_client_id() == "f" * 32)
+settings.set_spotify_client_id("0a1b2c3d4e5f60718293a4b5c6d7e8f9")
 
 # ------------------------------------------------------------- spotify_client
 print("\n[spotify_client with no client ID]")
@@ -189,25 +183,32 @@ def after_library_errors():
           "Couldn't read the Liked Songs count" in text)
     check("the underlying exception is in the log", "boom: playlists" in text)
     overlay.close_menu()
-    QTimer.singleShot(20, check_switcher)
+    QTimer.singleShot(20, check_tray)
 
 
-def check_switcher():
+def check_tray():
+    # The tray lost its Task Switcher icon when that feature was removed, and
+    # every panel's index is derived from the same list — so this pins down that
+    # the remaining icons still map to the right panels.
+    import overlay as overlay_module
+
+    keys = [key for key, _label in overlay_module._TRAY_ICONS]
+    check("tray no longer offers a Task Switcher", "switcher" not in keys,
+          f"(got {keys})")
+    check("tray is home/chats/music/sound/power",
+          keys == ["home", "chats", "music", "sound", "power"], f"(got {keys})")
+
     overlay.open_menu()
     for _ in range(4):
-        overlay.handle_button("right")  # tray index 4 == switcher
+        overlay.handle_button("right")  # last icon is now Power
     overlay.handle_button("cross")
-    QTimer.singleShot(120, after_switcher_open)
+    QTimer.singleShot(120, after_power_open)
 
 
-def after_switcher_open():
+def after_power_open():
     panel = overlay._active_panel
-    check("Switcher opened", type(panel).__name__ == "SwitcherPanel")
-    check("configured game appears as a row", len(panel._game_rows) == 1)
-    check(
-        "game row shows the saved name",
-        panel._game_rows[0].game.get("name") == "Elden Ring",
-    )
+    check("the last tray icon opens Power", type(panel).__name__ == "PowerPanel",
+          f"(got {type(panel).__name__})")
     overlay.close_menu()
     QTimer.singleShot(20, check_settings_window)
 
@@ -218,9 +219,8 @@ def check_settings_window():
     win.reload()
     check("settings window prefills the saved client ID",
           win._client_id_field.text() == "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
-    check("games list shows the saved game", win._games_list.count() == 1)
-    check("remove button disabled with nothing selected",
-          not win._remove_button.isEnabled())
+    check("settings window no longer has a games list",
+          not hasattr(win, "_games_list"))
 
     # A too-short ID must be rejected without touching what's stored.
     win._client_id_field.setText("not-a-real-client-id")

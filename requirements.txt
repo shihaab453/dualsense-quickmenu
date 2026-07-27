@@ -5,4 +5,3 @@ winrt-runtime==3.2.1
 winrt-Windows.Media.Control==3.2.1
 winrt-Windows.Foundation==3.2.1
 spotipy==2.26.0
-psutil==7.2.2

@@ -43,10 +43,6 @@ def check(label, condition, detail=""):
 
 CLIENT_ID = "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
 settings.set_spotify_client_id(CLIENT_ID)
-settings.set_pinned_games([
-    {"name": "Elden Ring", "path": r"C:\Games\eldenring.exe"},
-    {"name": "Helldivers 2", "path": r"C:\Games\helldivers2.exe"},
-])
 
 # ------------------------------------------------------------------- contents
 print("\n[report contents]")
@@ -54,8 +50,6 @@ text = diagnostics.report()
 check("names the app and version", version.VERSION in text)
 check("says whether it's packaged", "Build:" in text)
 check("reports the OS", "Windows" in text)
-check("reports the game count", "Games configured: 2" in text,
-      f"(got {[l for l in text.splitlines() if 'Games' in l]})")
 check("reports Spotify as configured", "client ID saved" in text)
 check("names the log file", "log.txt" in text)
 

@@ -144,10 +144,16 @@ class _TrackRow(QFrame):
         # art / the request fails) — derived from the track so different
         # songs are at least visually distinct in the meantime.
         hue = abs(hash(track.get("id") or track.get("name", ""))) % 360
-        self._art.setStyleSheet(f"background: hsl({hue}, 45%, 40%); border-radius: 6px;")
+        self._art.setStyleSheet(
+            f"background: hsl({hue}, 45%, 40%);"
+            f" border-radius: {album_art.CORNER_RADIUS}px;"
+        )
         lay.addWidget(self._art)
         album_art.get(
-            album_art.smallest_image_url(track), self._ART_SIZE, 6, self._on_art_loaded
+            album_art.smallest_image_url(track),
+            self._ART_SIZE,
+            album_art.CORNER_RADIUS,
+            self._on_art_loaded,
         )
 
         text_col = QVBoxLayout()
@@ -417,10 +423,13 @@ class MusicPanel(Panel):
         self._detail_status.setText(self._detail_status_pending)
         self._refresh_tile_states()
         hue = abs(hash(track.get("id") or track.get("name", ""))) % 360
-        self._detail_art.setStyleSheet(f"background: hsl({hue}, 45%, 40%); border-radius: 10px;")
+        self._detail_art.setStyleSheet(
+            f"background: hsl({hue}, 45%, 40%);"
+            f" border-radius: {album_art.CORNER_RADIUS}px;"
+        )
         track_id = track.get("id")
         album_art.get(
-            album_art.largest_image_url(track), 88, 10,
+            album_art.largest_image_url(track), 88, album_art.CORNER_RADIUS,
             lambda pixmap, tid=track_id: self._on_detail_art_loaded(pixmap, tid),
         )
         self._show_view(self._detail_view)

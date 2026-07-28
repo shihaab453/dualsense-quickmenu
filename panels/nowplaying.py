@@ -95,7 +95,8 @@ class NowPlayingPanel(Panel):
         self._art_label.setPixmap(QPixmap())
         self._art_label.setStyleSheet(
             "background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-            " stop:0 #3a4b8f, stop:1 #20264d); border-radius: 8px;"
+            f" stop:0 #3a4b8f, stop:1 #20264d);"
+            f" border-radius: {album_art.CORNER_RADIUS}px;"
         )
 
     def _on_art_loaded(self, pixmap, track_id) -> None:
@@ -143,7 +144,7 @@ class NowPlayingPanel(Panel):
         self._reset_art_placeholder()
         if art_url:
             album_art.get(
-                art_url, _ART_SIZE, 8,
+                art_url, _ART_SIZE, album_art.CORNER_RADIUS,
                 lambda pixmap, tid=track_id: self._on_art_loaded(pixmap, tid),
             )
         return RowList([])

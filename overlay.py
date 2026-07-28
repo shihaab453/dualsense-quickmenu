@@ -115,7 +115,13 @@ class _NowPlayingCard(QFrame):
             " stop:0 #3a4b8f, stop:1 #20264d); border-radius: 10px;"
         )
         lay.addWidget(art, stretch=1)
-        caption = QLabel("Now playing on Music")
+        # "Music" was the mockup's PS5 wording (the PS5's Spotify-powered app is
+        # called Music). Names the real service instead. This is a label for
+        # what the card opens, not a claim about the current track — the panel
+        # behind it falls back to the Windows media session, which can be any
+        # player. The card itself displays no track metadata, so it isn't
+        # attributing anyone's content to Spotify.
+        caption = QLabel("Now playing on Spotify")
         caption.setStyleSheet("font-size: 14px; color: rgba(255,255,255,0.55);")
         lay.addWidget(caption)
         self.set_selected(False)

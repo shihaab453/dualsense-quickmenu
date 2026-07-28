@@ -15,6 +15,14 @@ import logs
 
 log = logs.get(__name__)
 
+# Spotify's design guidelines specify the corner radius for album artwork: 4px
+# on small/medium devices, 8px on large ones. This is a desktop app, so 8px
+# applies everywhere — it's a stated number in terms this app has to meet, so
+# every place artwork is drawn uses this rather than picking something that
+# looks about right. The same value has to be used for the placeholder shown
+# while art downloads, or the corners visibly jump when it arrives.
+CORNER_RADIUS = 8
+
 _cache: dict[str, QPixmap] = {}  # url -> raw decoded pixmap, not yet scaled/rounded
 
 

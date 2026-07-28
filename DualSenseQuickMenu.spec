@@ -84,6 +84,11 @@ binaries = [
 
 datas = [
     ("assets/fonts/Manrope.ttf", "assets/fonts"),
+    # The obligation to reproduce dependency copyright notices applies to what
+    # is *distributed*, so these have to be inside the build, not just in the
+    # repo. Regenerate with tools/make_notices.py when dependencies change.
+    ("LICENSE", "."),
+    ("THIRD-PARTY-NOTICES.md", "."),
 ]
 
 hiddenimports = (

@@ -58,9 +58,8 @@ The app lives in the system tray (blue "PS" icon) — right-click it for
 "Windows protected your PC" SmartScreen warning the first time, because the
 build isn't code-signed; **More info → Run anyway**.
 
-To start it automatically when you log in, right-click `DualSenseQuickMenu.exe`
-→ **Create shortcut**, then move that shortcut into `shell:startup`
-(Win+R, type `shell:startup`).
+To start it automatically when you log in, tick **Start with Windows** in
+Settings (right-click the tray icon → **Settings…**).
 
 Then follow **Spotify setup** below.
 

@@ -38,6 +38,7 @@ import resources
 import settings
 import settings_window
 import single_instance
+import startup
 import version
 from controller import DualSenseListener
 from icons import render_app_icon
@@ -169,10 +170,15 @@ def _run_first_launch(tray: QSystemTrayIcon) -> None:
     log.info("First launch — showing the welcome notification and opening Settings")
     tray.showMessage(
         f"{version.APP_NAME} is running",
-        "It lives in your system tray. Press the PS button on your controller "
-        "to open the overlay, or right-click this icon for settings.",
+        # The Borderless line is here rather than only in the README because
+        # testers don't read READMEs, and "the overlay doesn't show over my
+        # game" is the most likely report — it's a Windows limitation, not a bug,
+        # so the cheapest fix is telling people before they hit it.
+        "It lives in your system tray — press the PS button on your controller "
+        "to open it. Set your games to Borderless (not Fullscreen) so the "
+        "overlay can draw on top.",
         QIcon(render_app_icon(64)),
-        10000,
+        15000,
     )
     # Deferred rather than called directly: the tray notification should be on
     # screen before a window steals attention, and Qt hasn't drawn it yet at
@@ -196,6 +202,11 @@ def main() -> None:
     # We live in the tray: closing/hiding the overlay must not quit the app.
     app.setQuitOnLastWindowClosed(False)
     _load_app_font()
+
+    # If "Start with Windows" is on but its recorded path has moved (folder
+    # renamed, new build extracted elsewhere), repoint it — otherwise it stops
+    # launching at login while still showing as enabled.
+    startup.refresh_if_stale()
 
     if single_instance.already_running():
         # Told, not silently ignored: the app has no window, so someone who

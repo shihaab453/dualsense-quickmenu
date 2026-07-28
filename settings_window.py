@@ -18,6 +18,7 @@ import os
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 import diagnostics
 import logs
 import settings
+import startup
 import version
 from actions import spotify_client as sp
 
@@ -68,8 +70,13 @@ QPushButton#primary:hover { background: #55e6a8; }
 QListWidget { background: rgba(0,0,0,0.30); color: white; border-radius: 8px;
               border: 1px solid rgba(255,255,255,0.12); font-size: 13px;
               padding: 4px; }
-QListWidget::item { padding: 6px 8px; border-radius: 6px; }
-QListWidget::item:selected { background: rgba(61,220,151,0.25); }
+QCheckBox { color: white; font-family: 'Manrope', 'Segoe UI', sans-serif;
+            font-size: 15px; font-weight: 600; spacing: 10px; }
+QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px;
+                       border: 1px solid rgba(255,255,255,0.35);
+                       background: rgba(0,0,0,0.35); }
+QCheckBox::indicator:hover { border: 1px solid rgba(255,255,255,0.6); }
+QCheckBox::indicator:checked { background: #3ddc97; border: 1px solid #3ddc97; }
 """
 
 
@@ -90,6 +97,9 @@ class SettingsWindow(QDialog):
         self.setObjectName("settingsDialog")
         self.setStyleSheet("#settingsDialog { background: #15151c; }")
         self.setMinimumWidth(640)
+        # Set while widgets are being synced to stored state, so their change
+        # signals don't get mistaken for the user interacting with them.
+        self._loading = False
 
         # The content sits in a scroll area because it ships to machines whose
         # resolution we don't know, and the Spotify walkthrough alone is tall.
@@ -115,6 +125,8 @@ class SettingsWindow(QDialog):
         lay.setContentsMargins(28, 24, 28, 24)
         lay.setSpacing(14)
 
+        self._build_general_section(lay)
+        lay.addWidget(_divider())
         self._build_spotify_section(lay)
         lay.addWidget(_divider())
         self._build_troubleshooting_section(lay)
@@ -144,6 +156,67 @@ class SettingsWindow(QDialog):
         # screen it's opening on — the scroll area covers any shortfall.
         available = QGuiApplication.primaryScreen().availableGeometry()
         self.resize(680, min(self._root.sizeHint().height(), int(available.height() * 0.9)))
+
+    # ---- General ----
+
+    def _build_general_section(self, lay: QVBoxLayout) -> None:
+        title = QLabel("General")
+        title.setObjectName("sectionTitle")
+        lay.addWidget(title)
+
+        self._startup_checkbox = QCheckBox("Start with Windows")
+        self._startup_checkbox.toggled.connect(self._on_startup_toggled)
+        lay.addWidget(self._startup_checkbox)
+
+        startup_hint = QLabel(
+            "Launches the overlay automatically when you log in, so it's already "
+            "running by the time you start a game."
+        )
+        startup_hint.setObjectName("hint")
+        startup_hint.setWordWrap(True)
+        lay.addWidget(startup_hint)
+
+        self._startup_status = QLabel()
+        self._startup_status.setObjectName("status")
+        self._startup_status.setWordWrap(True)
+        lay.addWidget(self._startup_status)
+
+        # The single most common "it's broken" report, and it isn't a bug: no
+        # overlay of any kind can draw over an exclusive-fullscreen game. Said
+        # here as well as in the first-run notification and the README, because
+        # this is where someone looks when it isn't working.
+        fullscreen_note = QLabel(
+            "<b>Set your games to Borderless, not Fullscreen.</b> No overlay can "
+            "draw on top of an exclusive-fullscreen game — that's a Windows "
+            "limitation, not something this app can work around. Borderless looks "
+            "identical and is usually under Settings → Video → Display Mode."
+        )
+        fullscreen_note.setObjectName("hint")
+        fullscreen_note.setWordWrap(True)
+        fullscreen_note.setTextFormat(Qt.RichText)
+        lay.addWidget(fullscreen_note)
+
+    def _on_startup_toggled(self, checked: bool) -> None:
+        # Guard against reacting to reload() setting the box programmatically,
+        # which would rewrite the registry every time the window is opened.
+        if self._loading:
+            return
+        ok = startup.enable() if checked else startup.disable()
+        if ok:
+            self._startup_status.setText(
+                "Will start automatically when you log in."
+                if checked
+                else "Won't start automatically."
+            )
+            return
+        self._startup_status.setText(
+            "Couldn't change that setting — see Copy diagnostics below."
+        )
+        # Put the box back to what the registry actually says, so the UI can't
+        # claim a state that didn't take.
+        self._loading = True
+        self._startup_checkbox.setChecked(startup.is_enabled())
+        self._loading = False
 
     # ---- Spotify ----
 
@@ -338,6 +411,13 @@ class SettingsWindow(QDialog):
     def reload(self) -> None:
         """Re-reads everything from disk. Called each time the window is
         opened, so it never shows state left over from a previous visit."""
+        # _loading suppresses the checkbox's toggled handler while its state is
+        # being set to match reality — otherwise opening the window would look
+        # like a user click and rewrite the registry.
+        self._loading = True
+        self._startup_checkbox.setChecked(startup.is_enabled())
+        self._loading = False
+        self._startup_status.setText("")
         self._refresh_spotify_status()
 
 

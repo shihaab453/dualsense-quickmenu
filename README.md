@@ -19,9 +19,12 @@ between them, Cross to open one, Circle to back out, PS again to close):
   volume.
 - **Power** — Sleep, Shut Down, Restart.
 - A **Now Playing** card on the home screen (D-pad up from the tray) shows
-  whatever's currently playing — prefers Spotify if you're logged in,
-  otherwise falls back to whatever Windows itself is tracking (works with
-  browsers, other players, etc).
+  what's currently playing on Spotify — real album art, title, and (once
+  selected) the artist and what playlist/album it's from. Spotify only: if
+  nothing's playing there, the card says so rather than showing some other
+  app. Opening it (Cross) goes to the full Now Playing panel, which *does*
+  also show whatever Windows itself is tracking (browsers, other players,
+  etc.) when Spotify has nothing playing.
 - **Chats & Calls** isn't built yet — the icon is there, and opening it says so.
   The home cards other than Now Playing are decorative, matching the original
   PS5 UI they're modeled on.
@@ -185,9 +188,15 @@ anywhere automatically.
 - **"Open Spotify on this PC or phone to enable playback control"** — Spotify
   needs an *active* device to control; open the Spotify app anywhere (PC,
   phone) and start playback there once, then the overlay can take over.
-- **Now Playing card shows the wrong app / stale info** — it only prefers
-  Spotify data when you're logged in and something's actually playing there;
-  otherwise it falls back to whatever Windows' own media tracker last saw.
+- **Now Playing card says "Nothing playing" even though something is** — the
+  card only ever shows Spotify's own data, not other players. If Spotify
+  itself has nothing active (paused too long, no active device, logged out),
+  the card says so; open the full panel (Cross) to also see whatever Windows'
+  own media tracker last saw for other apps.
+- **Now Playing panel shows the wrong app / stale info** — the panel (not the
+  home card) falls back to Windows' media tracker when Spotify has nothing
+  playing, so it can show a browser or another player; that's expected, not a
+  bug.
 
 ## Not yet supported (planned)
 

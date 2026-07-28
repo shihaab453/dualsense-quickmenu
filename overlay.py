@@ -16,13 +16,17 @@
 # Keyboard fallback for testing without a controller: arrows / Enter / Esc.
 
 import ctypes
+import random
 import time
 from datetime import datetime
 
-from PySide6.QtCore import QPropertyAnimation, Qt, QTimer
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QObject, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+import logs
+from actions import album_art
+from actions import spotify_client as sp
 from icons import render_battery_pill, render_icon
 from nav import NavStack, RowList
 from panels.base import Tile
@@ -31,6 +35,8 @@ from panels.music import MusicPanel
 from panels.nowplaying import NowPlayingPanel
 from panels.power import PowerPanel
 from panels.sound import SoundPanel
+
+log = logs.get(__name__)
 
 # (key, hover label) — left to right. The mockup has a sixth icon here, a Task
 # Switcher (pinned/recently-played games); it was built and then removed once it
@@ -99,32 +105,243 @@ _KEYMAP = {
 }
 
 
+class _PlayingIndicator(QWidget):
+    """The small "currently playing" glyph in the card's top-right corner: 4
+    bars that jump to random heights on a timer while something is playing,
+    swapping to a static pause glyph otherwise. Purely decorative — not
+    reactive to real audio, matching the real PS5 UI this was modeled on,
+    which does the same thing.
+
+    Owns its own QTimer, started/stopped via set_playing() rather than run
+    continuously, so nothing animates (or costs CPU) while nothing's playing
+    or the card isn't visible — see OverlayWindow.close_menu()."""
+
+    _BAR_COUNT = 4
+    _TICK_MS = 140
+
+    def __init__(self, size: int = 20):
+        super().__init__()
+        self.setFixedSize(size, size)
+        self._playing = False
+        self._heights = [0.45, 0.75, 0.55, 0.35]
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+
+    def set_playing(self, playing: bool) -> None:
+        if playing == self._playing:
+            return
+        self._playing = playing
+        if playing:
+            self._timer.start(self._TICK_MS)
+        else:
+            self._timer.stop()
+        self.update()
+
+    def _tick(self) -> None:
+        self._heights = [random.uniform(0.25, 1.0) for _ in range(self._BAR_COUNT)]
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if self._playing:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("white"))
+            w, h = self.width(), self.height()
+            gap = w / (self._BAR_COUNT * 2 - 1)
+            for i, frac in enumerate(self._heights):
+                bar_h = max(2.0, h * frac)
+                painter.drawRoundedRect(
+                    QRectF(i * gap * 2, h - bar_h, gap, bar_h), 1, 1
+                )
+        else:
+            painter.drawPixmap(0, 0, render_icon("pause", "white", self.width()))
+        painter.end()
+
+
+class _RefreshSignal(QObject):
+    # get_now_playing_summary_async's callback fires on a background thread;
+    # Qt widgets can only be touched from the main thread, so this hops back
+    # over — same bridge shape as MusicPanel's login flow.
+    ready = Signal(object)  # dict | None
+
+
 class _NowPlayingCard(QFrame):
-    """The only functional home card in Phase A — the other three are
-    decorative placeholders in the mockup too (see design README)."""
+    """The home screen's Now Playing card — the only functional one of the
+    four; the other three are decorative placeholders in the mockup too.
+
+    Deliberately shows Spotify data only, nothing else. Unlike the Now
+    Playing *panel* (panels/nowplaying.py), which falls back to Windows'
+    system-wide media session so it works for any player, this card is
+    explicitly Spotify-branded (the reserved logo slot below) — silently
+    substituting some other app's track under Spotify's branding would be
+    exactly the "attributing someone else's content to Spotify" problem
+    already fixed once for the panel's own heading. If nothing's playing on
+    Spotify, the card says so rather than reaching for the Windows fallback.
+
+    Height is never hardcoded — every child is a fixed size, so the card's
+    total height falls out of Qt's own layout math, and toggling
+    _detail_widget's visibility changes it for free. See set_selected() for
+    why that still needs an explicit nudge (gotcha #4 territory: a widget
+    that changes size after construction can under-measure itself even after
+    invalidating its layout)."""
+
+    _WIDTH = 260
+    _ART_SIZE = _WIDTH - 18 * 2  # fills the card's content width, square
 
     def __init__(self):
         super().__init__()
-        self.setFixedSize(260, 300)
+        self.setFixedWidth(self._WIDTH)
         self.setObjectName("card")
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 18, 18, 18)
-        art = QFrame()
-        art.setStyleSheet(
-            "background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-            " stop:0 #3a4b8f, stop:1 #20264d); border-radius: 10px;"
+        self._pending_art_url = None
+        self._refreshing = False
+
+        self._signal = _RefreshSignal()
+        self._signal.ready.connect(self._on_summary_ready)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 18, 18, 18)
+        outer.setSpacing(8)
+
+        # Real QWidget boundary for this row (gotcha #3): a bare addLayout()
+        # here has, historically in this app, cached a stale sizeHint once
+        # anything around it changes size.
+        top_row_widget = QWidget()
+        top_row = QHBoxLayout(top_row_widget)
+        top_row.setContentsMargins(0, 0, 0, 0)
+        # Reserved and left empty on purpose — the real Spotify logo asset
+        # goes here once supplied. Never approximate or redraw their mark;
+        # their design guidelines are explicit that it must not be modified.
+        self._logo_slot = QLabel()
+        self._logo_slot.setFixedSize(24, 24)
+        top_row.addWidget(self._logo_slot)
+        top_row.addStretch(1)
+        self._indicator = _PlayingIndicator(20)
+        top_row.addWidget(self._indicator, 0, Qt.AlignTop)
+        outer.addWidget(top_row_widget)
+
+        self._art_label = QLabel()
+        self._art_label.setFixedSize(self._ART_SIZE, self._ART_SIZE)
+        outer.addWidget(self._art_label)
+
+        self._caption_label = QLabel()
+        self._caption_label.setStyleSheet(
+            "font-size: 13px; color: rgba(255,255,255,0.5);"
         )
-        lay.addWidget(art, stretch=1)
-        # "Music" was the mockup's PS5 wording (the PS5's Spotify-powered app is
-        # called Music). Names the real service instead. This is a label for
-        # what the card opens, not a claim about the current track — the panel
-        # behind it falls back to the Windows media session, which can be any
-        # player. The card itself displays no track metadata, so it isn't
-        # attributing anyone's content to Spotify.
-        caption = QLabel("Now playing on Spotify")
-        caption.setStyleSheet("font-size: 14px; color: rgba(255,255,255,0.55);")
-        lay.addWidget(caption)
+        outer.addWidget(self._caption_label)
+
+        self._title_label = QLabel()
+        self._title_label.setStyleSheet(
+            "font-size: 16px; font-weight: 700; color: white;"
+        )
+        outer.addWidget(self._title_label)
+
+        # Shown only while the card is D-pad-selected — see set_selected().
+        # Real QWidget boundary, same reason as top_row_widget above.
+        self._detail_widget = QWidget()
+        detail_lay = QVBoxLayout(self._detail_widget)
+        detail_lay.setContentsMargins(0, 2, 0, 0)
+        detail_lay.setSpacing(2)
+        self._artist_label = QLabel()
+        self._artist_label.setStyleSheet(
+            "font-size: 13px; color: rgba(255,255,255,0.65);"
+        )
+        detail_lay.addWidget(self._artist_label)
+        self._source_label = QLabel()
+        self._source_label.setStyleSheet(
+            "font-size: 12px; color: rgba(255,255,255,0.4);"
+        )
+        detail_lay.addWidget(self._source_label)
+        outer.addWidget(self._detail_widget)
+        self._detail_widget.hide()
+
+        self._show_empty_state()
         self.set_selected(False)
+
+    # ---- text / art helpers ----
+
+    def _elide(self, label: QLabel, text: str) -> None:
+        """Single-line truncation with a trailing "…", matching the real PS5
+        card's card this was modeled on — not word-wrap, which would make the
+        card's height depend on how long a song/artist/playlist name happens
+        to be."""
+        available = self._WIDTH - 18 * 2
+        label.setText(QFontMetrics(label.font()).elidedText(text, Qt.ElideRight, available))
+
+    def _reset_art_placeholder(self) -> None:
+        self._art_label.setPixmap(QPixmap())
+        self._art_label.setStyleSheet(
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+            f" stop:0 #3a4b8f, stop:1 #20264d);"
+            f" border-radius: {album_art.CORNER_RADIUS}px;"
+        )
+
+    def _on_art_loaded(self, pixmap, url) -> None:
+        # url must match what's still wanted — refresh() can complete after a
+        # newer one has already started (e.g. the track changed mid-download).
+        if pixmap is None or url != self._pending_art_url:
+            return
+        self._art_label.setStyleSheet("")
+        self._art_label.setPixmap(pixmap)
+
+    def pause_for_close(self) -> None:
+        """Stops the playing-indicator's animation timer. Called when the
+        whole overlay closes — there's no point animating a widget nobody can
+        see, and left running the timer would otherwise tick indefinitely in
+        the background for as long as the app is open. The next refresh()
+        (open_menu() always triggers one) resyncs it if music is still
+        genuinely playing."""
+        self._indicator.set_playing(False)
+
+    def _show_empty_state(self) -> None:
+        self._pending_art_url = None
+        self._indicator.set_playing(False)
+        self._reset_art_placeholder()
+        self._caption_label.setText("Spotify")
+        self._elide(self._title_label, "Nothing playing")
+        self._elide(self._artist_label, "")
+        self._elide(self._source_label, "")
+
+    # ---- data refresh ----
+
+    def refresh(self) -> None:
+        """Kicks off a background fetch of what's currently playing; the card
+        updates itself once it arrives. Never blocks — see
+        spotify_client.get_now_playing_summary_async for why that matters
+        here specifically (this runs on every menu-open, not just when a
+        panel is deliberately opened)."""
+        if self._refreshing:
+            return
+        if not sp.is_logged_in():
+            self._show_empty_state()
+            return
+        self._refreshing = True
+        sp.get_now_playing_summary_async(self._signal.ready.emit)
+
+    def _on_summary_ready(self, summary) -> None:
+        self._refreshing = False
+        if summary is None:
+            self._show_empty_state()
+            return
+
+        self._indicator.set_playing(summary["is_playing"])
+        self._caption_label.setText("Now playing on Spotify")
+        self._elide(self._title_label, summary["title"])
+        self._elide(self._artist_label, summary["artists"])
+        source = summary.get("source_name")
+        self._elide(self._source_label, f"From {source}" if source else "")
+
+        art_url = summary.get("art_url")
+        self._pending_art_url = art_url
+        if art_url:
+            album_art.get(
+                art_url, self._ART_SIZE, album_art.CORNER_RADIUS,
+                lambda pixmap, u=art_url: self._on_art_loaded(pixmap, u),
+            )
+        else:
+            self._reset_art_placeholder()
+
+    # ---- selection ----
 
     def set_selected(self, selected: bool) -> None:
         border = "2px solid #3ddc97" if selected else "1px solid rgba(255,255,255,0.08)"
@@ -132,6 +349,17 @@ class _NowPlayingCard(QFrame):
             f"#card {{ background: rgba(28,29,33,220); border-radius: 16px;"
             f" border: {border}; }}"
         )
+        self._detail_widget.setVisible(selected)
+        # The card's height depends on _detail_widget's visibility (nothing
+        # here is hardcoded — see the class docstring), and this app's own
+        # history (gotchas #2-#4) is that a single synchronous relayout right
+        # after a size-affecting change doesn't reliably measure correctly.
+        # updateGeometry() nudges Qt to recompute now; the caller (OverlayWindow)
+        # still does its own explicit _relayout() afterward, matching how every
+        # other size-changing action in this app is handled.
+        self.updateGeometry()
+        if selected:
+            self.refresh()
 
 
 def _decorative_card(caption: str) -> QFrame:
@@ -228,18 +456,34 @@ class OverlayWindow(QWidget):
             "color: rgba(255,255,255,0.75); font-size: 19px; font-family: 'Manrope', 'Segoe UI', sans-serif;"
         )
 
+        # Same role as _tray_label but for the cards row — currently only ever
+        # shows text for the Now Playing card, since it's the only card that's
+        # actually part of the cards RowList (the 3 decorative ones aren't
+        # navigable at all, so there's nothing to hint at for them).
+        self._cards_hint_label = QLabel(self)
+        self._cards_hint_label.setStyleSheet(
+            "color: rgba(255,255,255,0.5); font-size: 14px; font-family: 'Manrope', 'Segoe UI', sans-serif;"
+        )
+
         self._now_playing_card = _NowPlayingCard()
         self._cards_widget = QWidget(self)
         cards_lay = QHBoxLayout(self._cards_widget)
         cards_lay.setSpacing(22)
         cards_lay.setContentsMargins(0, 0, 0, 0)
-        cards_lay.addWidget(self._now_playing_card)
+        # Explicit bottom alignment on every card: they're all the same fixed
+        # height today, so this changes nothing yet, but the Now Playing card's
+        # height now varies with selection (see _NowPlayingCard's docstring) —
+        # without this, QHBoxLayout's default alignment for children shorter
+        # than the tallest one is to hang them from the top, which would visibly
+        # detach the 3 decorative cards' bottoms from the row's shared baseline
+        # the moment the real card grows taller than them.
+        cards_lay.addWidget(self._now_playing_card, 0, Qt.AlignBottom)
         for caption in (
             "Recently created\nNew Clip Saved",
             "Discover\nQuick Setup Tips",
             "Recently created\nNew Screenshot",
         ):
-            cards_lay.addWidget(_decorative_card(caption))
+            cards_lay.addWidget(_decorative_card(caption), 0, Qt.AlignBottom)
 
     # ---- input handling ----
 
@@ -304,10 +548,19 @@ class OverlayWindow(QWidget):
             RowList(
                 [self._now_playing_card],
                 on_activate=lambda i, r: self._open_panel("nowplaying"),
+                on_select=self._update_cards_hint,
                 orientation="horizontal",
                 name="cards",
             )
         )
+        self._relayout()
+
+    def _update_cards_hint(self, index, card) -> None:
+        # Text only, matching the reference — Square isn't mapped to anything
+        # in controller.py yet, so this doesn't do anything if pressed. Cross
+        # still opens the full Now Playing panel, unchanged.
+        self._cards_hint_label.setText("Press □ for Pause")
+        self._relayout()
 
     def _go_back(self) -> None:
         still_open = self.nav.pop()
@@ -401,6 +654,10 @@ class OverlayWindow(QWidget):
         self._scrim.hide()
         self._cards_widget.show()
         self._now_playing_card.set_selected(False)
+        # Non-blocking (see get_now_playing_summary_async) — safe to fire on
+        # every open, including ones where the user never navigates up to the
+        # card at all.
+        self._now_playing_card.refresh()
 
         self._update_status()
         tray_list = RowList(
@@ -431,6 +688,7 @@ class OverlayWindow(QWidget):
         for panel in self._panels.values():
             panel.hide()
         self._active_panel = None
+        self._now_playing_card.pause_for_close()
 
     def set_controller_connected(self, connected: bool) -> None:
         if self.isVisible():
@@ -462,8 +720,20 @@ class OverlayWindow(QWidget):
         tray_y = h - _TRAY_BOTTOM_MARGIN
         self._tray_widget.move((w - self._tray_widget.width()) // 2, tray_y)
 
+        # _tray_label and _cards_hint_label share this one slot rather than
+        # each getting their own reserved space — they're never meaningful at
+        # the same time (home_focus is either "tray" or "cards", never both),
+        # and giving the cards hint its own permanent gap would mean growing
+        # content_bottom, which panels anchor against too and would shift for
+        # a hint line that only ever applies to the home screen.
+        hint_y = tray_y - _LABEL_GAP
+        self._tray_label.setVisible(self._mode == "home" and self._home_focus == "tray")
         self._tray_label.adjustSize()
-        self._tray_label.move((w - self._tray_label.width()) // 2, tray_y - _LABEL_GAP)
+        self._tray_label.move((w - self._tray_label.width()) // 2, hint_y)
+
+        self._cards_hint_label.setVisible(self._mode == "home" and self._home_focus == "cards")
+        self._cards_hint_label.adjustSize()
+        self._cards_hint_label.move((w - self._cards_hint_label.width()) // 2, hint_y)
 
         content_bottom = tray_y - _LABEL_GAP - _CONTENT_GAP
         if self._mode == "panel" and self._active_panel:

@@ -175,6 +175,102 @@ def get_current_playback():
     return _call(get_client().current_playback)
 
 
+# playlist id -> name. Playlist names rarely change, and resolving one costs
+# a real API call the currently-playing endpoint doesn't give for free — see
+# resolve_context_name for why — so a lookup is cached rather than repeated.
+_playlist_name_cache: dict[str, str] = {}
+
+
+def resolve_context_name(playback: dict) -> str | None:
+    """A human-readable name for what's currently playing *from* — an album
+    title, a playlist's own name — or None when there's nothing sensible to
+    show. Never raises; a lookup failure just means no name.
+
+    Spotify's current-playback response only ever gives a `context` object
+    with a type and a URI, never a display name — checked against a live
+    account rather than assumed, per HANDOFF.md gotcha #7, since the docs have
+    been wrong about response shape twice before. For an album, the currently-
+    playing track's own embedded `album` field already carries the name for
+    free. For a playlist there's no such shortcut; it takes a real API call.
+
+    Returns None — not a guess — when context is absent, which covers Liked
+    Songs, a single queued track, and Spotify radio identically; there's no
+    way to tell those apart from the API alone. Also None for context types
+    this doesn't specifically handle (a podcast episode's show, etc.)."""
+    context = playback.get("context") or {}
+    context_type = context.get("type")
+    uri = context.get("uri") or ""
+
+    if context_type == "album":
+        item = playback.get("item") or {}
+        return (item.get("album") or {}).get("name")
+
+    if context_type == "playlist":
+        playlist_id = uri.rsplit(":", 1)[-1]
+        if playlist_id in _playlist_name_cache:
+            return _playlist_name_cache[playlist_id]
+        try:
+            result = get_client().playlist(playlist_id, fields="name")
+        except Exception:
+            log.exception("Couldn't resolve playlist name for %r", playlist_id)
+            return None
+        name = result.get("name")
+        if name:
+            _playlist_name_cache[playlist_id] = name
+        return name
+
+    return None
+
+
+def get_now_playing_summary() -> dict | None:
+    """Everything the home screen's Now Playing card needs, in one call:
+    title, artists, album art URL, playing state, and (best-effort) what it's
+    playing from. None if nothing is playing or the lookup fails.
+
+    Synchronous — see get_now_playing_summary_async for the version that
+    doesn't block the Qt main thread, which is what UI code should actually
+    call. This one exists as the plain, easily-testable core."""
+    try:
+        playback = get_current_playback()
+    except Exception:
+        log.exception("Couldn't read current playback for the Now Playing card")
+        return None
+    if not playback or not playback.get("item"):
+        return None
+    track = playback["item"]
+    # Deferred import: album_art doesn't need spotify_client, but importing it
+    # at module level here would be an easy accidental cycle to introduce later
+    # if that ever changes, for a helper only used in this one function.
+    from actions import album_art
+
+    return {
+        "track": track,
+        "title": track.get("name") or "(unknown title)",
+        "artists": ", ".join(a["name"] for a in track.get("artists", [])),
+        "art_url": album_art.smallest_image_url(track),
+        "is_playing": bool(playback.get("is_playing")),
+        "source_name": resolve_context_name(playback),
+    }
+
+
+def get_now_playing_summary_async(on_done) -> None:
+    """Runs get_now_playing_summary() on a background thread and calls
+    on_done(summary_or_None) when it's ready.
+
+    Why this needs to exist rather than the panels' usual "just call it
+    synchronously in build_nav()" pattern: unlike a panel (fetched only once
+    it's actually opened), the home card's data has to be ready every time the
+    overlay itself opens — the PS button — and that path has to stay
+    instant. A blocking network call there would put Spotify's response time
+    on the critical path for every single controller press, panel or no
+    panel. on_done fires on the background thread; the caller must hop back to
+    the Qt thread itself (see MusicPanel's _LoginSignal for the same pattern
+    applied to login)."""
+    threading.Thread(
+        target=lambda: on_done(get_now_playing_summary()), daemon=True
+    ).start()
+
+
 def play_pause() -> None:
     playback = get_current_playback()
     if playback and playback.get("is_playing"):

@@ -64,6 +64,11 @@ def render_app_icon(size: int) -> QPixmap:
 
 _ICONS = {
     "home": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11L12 4l8 7"/><path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/></svg>',
+    # Generic "opens somewhere outside this app" arrow. Deliberately not a
+    # Spotify mark: their guidelines forbid modifying or approximating the logo,
+    # so the button that links out is a neutral glyph and the branding is left
+    # to the real asset.
+    "external": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h7v7"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
     "chats": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2"><circle cx="9" cy="10" r="3.2"/><circle cx="16" cy="10" r="3.2" opacity=".55"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M12.5 20c0-2.6 2.2-4.4 4.8-4.4s4.7 1.8 4.7 4.4" opacity=".55"/></svg>',
     "music": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"><path d="M4 15V9"/><path d="M9 18V6"/><path d="M14 15V9"/><path d="M19 12V9"/></svg>',
     "sound": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"><path d="M7 8h4l6-4v16l-6-4H7z" fill="{c}" stroke="none"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>',

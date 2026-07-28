@@ -12,8 +12,9 @@ between them, Cross to open one, Circle to back out, PS again to close):
 
 - **Music** — log in with Spotify once, then browse Liked Songs and your
   playlists, play a track, and control like/shuffle/previous/play-pause/
-  next/repeat. Requires **Spotify Premium** for playback control (free
-  accounts can browse but Spotify itself blocks remote control).
+  next/repeat. The last control opens the current song in Spotify itself.
+  Requires **Spotify Premium** for playback control (free accounts can browse
+  but Spotify itself blocks remote control).
 - **Sound** — output/input device names, master volume, mic mute, mic
   volume.
 - **Power** — Sleep, Shut Down, Restart.

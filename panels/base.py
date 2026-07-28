@@ -4,17 +4,23 @@
 # near-opaque translucent surface instead — visually close since the real
 # panels are ~90% opaque anyway.
 
-from PySide6.QtCore import QPropertyAnimation, QRect, Qt
+from PySide6.QtCore import QPropertyAnimation, QRect, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
+import logs
+from actions import spotify_client
 from icons import render_icon
+
+_log = logs.get(__name__)
 
 # Default cap on how tall a scrollable row list can grow before scrolling,
 # so a panel's size stays consistent regardless of how many rows it holds.
@@ -133,6 +139,61 @@ class Panel(QFrame):
         self._anim.setStartValue(start_rect)
         self._anim.setEndValue(end_rect)
         self._anim.start()
+
+
+class ActionRow(QFrame):
+    """A single full-width pressable row with a label. Used wherever a panel
+    needs one plain thing to press — Music's "Set up Spotify" / "Log in with
+    Spotify" entry points, and Now Playing's link back to Spotify."""
+
+    def __init__(self, text: str):
+        super().__init__()
+        self.setObjectName("row")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(18, 14, 18, 14)
+        self._label = QLabel(text)
+        self._label.setStyleSheet("font-size: 20px; font-weight: 600;")
+        lay.addWidget(self._label)
+        self.set_selected(False)
+
+    def set_text(self, text: str) -> None:
+        self._label.setText(text)
+
+    def set_selected(self, selected: bool) -> None:
+        self.setStyleSheet(selected_row_style(selected, radius=14))
+
+
+def open_in_spotify(panel, item) -> bool:
+    """Opens a track/playlist in Spotify, closing the overlay first.
+
+    Shared by every view that displays Spotify metadata, because their design
+    guidelines require that such metadata always links back to the service.
+
+    Tries the `spotify:` URI before the https one so the desktop app opens
+    directly where it's installed (the guidelines ask for that specifically),
+    and falls back to open.spotify.com otherwise. The overlay is closed first
+    for the same reason the Spotify login flow closes it: it's frameless,
+    always-on-top and holds the foreground, so anything launched underneath it
+    would be invisible."""
+    app_uri, web_url = spotify_client.links_for(item)
+    if not app_uri and not web_url:
+        _log.warning("No Spotify link available for %r", item)
+        return False
+
+    window = panel.window()
+    close_menu = getattr(window, "close_menu", None)
+    if callable(close_menu):
+        close_menu()
+
+    for target in (app_uri, web_url):
+        if not target:
+            continue
+        if QDesktopServices.openUrl(QUrl(target)):
+            _log.info("Opened %s in Spotify", target)
+            return True
+        _log.info("Couldn't open %s — trying the next form", target)
+    _log.warning("Every Spotify link form failed for %r", item)
+    return False
 
 
 def clear_layout(layout) -> None:

@@ -101,6 +101,23 @@ def is_logged_in() -> bool:
     return auth.validate_token(auth.cache_handler.get_cached_token()) is not None
 
 
+def links_for(item: dict) -> tuple:
+    """(app_uri, web_url) for a track, playlist or album — either may be None.
+
+    Spotify's design guidelines require that displayed metadata always links
+    back to the Spotify service, and that users are sent to the Spotify
+    application when it's available. Both forms are returned so a caller can
+    try the `spotify:` URI first (which opens the desktop app directly) and fall
+    back to the open.spotify.com URL, which works for anyone without the app
+    installed — browsing works fine on a free account with no desktop client,
+    so that fallback isn't hypothetical."""
+    if not isinstance(item, dict):
+        return None, None
+    app_uri = item.get("uri") or None
+    web_url = (item.get("external_urls") or {}).get("spotify") or None
+    return app_uri, web_url
+
+
 def forget_login() -> None:
     """Drops the cached OAuth token and the built client. Called when the
     client ID changes: a token issued by one Spotify app is meaningless to a

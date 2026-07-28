@@ -16,7 +16,7 @@ from actions import album_art
 from actions import now_playing
 from actions import spotify_client as sp
 from nav import RowList
-from panels.base import Panel
+from panels.base import ActionRow, Panel, open_in_spotify
 
 log = logs.get(__name__)
 
@@ -29,7 +29,9 @@ _SONG_LABEL_WIDTH = 460 - 36 - 36 - _ART_SIZE - 14
 
 class NowPlayingPanel(Panel):
     def __init__(self):
-        super().__init__("Now playing on Music", width=460)
+        # Replaced per-open by build_nav with the real source; this is only
+        # what shows before the first refresh.
+        super().__init__("Now playing", width=460)
         # Smaller/lighter than Sound/Power's 32px bold titles —
         # matches the mockup's own header style for this panel (19px/600).
         self.heading.setStyleSheet("font-size: 19px; font-weight: 600;")
@@ -75,7 +77,14 @@ class NowPlayingPanel(Panel):
         self.body.addWidget(content_widget)
 
         self._current_art_id = None
+        self._current_track = None
         self._reset_art_placeholder()
+
+        # Built once and shown/hidden per build_nav, rather than created and
+        # destroyed — the RowList holds a reference to it either way.
+        self._open_row = ActionRow("Open in Spotify")
+        self._open_row.hide()
+        self.body.addWidget(self._open_row)
 
         note = QLabel(
             "Progress and playback controls are coming in a later update."
@@ -139,6 +148,16 @@ class NowPlayingPanel(Panel):
             art_url = None
             track_id = None
 
+        # The heading names Spotify only when the track actually came from
+        # Spotify. This panel falls back to the Windows media session, which
+        # reports whatever is playing anywhere — a browser, VLC, a competing
+        # music app — and labelling that "on Spotify" would attribute someone
+        # else's content to them, which their guidelines specifically prohibit.
+        self._current_track = track
+        self.heading.setText(
+            "Now playing on Spotify" if track is not None else "Now playing"
+        )
+
         self._song_label.setText(text)
         self._current_art_id = track_id
         self._reset_art_placeholder()
@@ -147,4 +166,19 @@ class NowPlayingPanel(Panel):
                 art_url, _ART_SIZE, album_art.CORNER_RADIUS,
                 lambda pixmap, tid=track_id: self._on_art_loaded(pixmap, tid),
             )
-        return RowList([])
+
+        # Spotify's guidelines require displayed metadata to link back to the
+        # service — so the row appears exactly when Spotify metadata is on
+        # screen, and not when the fallback is showing another player's track.
+        if track is None:
+            self._open_row.hide()
+            return RowList([])
+        self._open_row.show()
+        return RowList(
+            [self._open_row],
+            on_activate=lambda i, r: self._open_in_spotify(),
+            orientation="horizontal",
+        )
+
+    def _open_in_spotify(self) -> None:
+        open_in_spotify(self, self._current_track or {})

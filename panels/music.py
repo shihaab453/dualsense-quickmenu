@@ -38,11 +38,13 @@ from actions import spotify_client as sp
 from icons import render_icon
 from nav import RowList
 from panels.base import (
+    ActionRow,
     Panel,
     Tile,
     clear_layout,
     fit_scroll_to_content,
     make_scrollable_rows,
+    open_in_spotify,
     selected_row_style,
 )
 
@@ -80,24 +82,6 @@ class _LoginSignal(QObject):
     # only be touched from the main thread, so this signal hops back over —
     # the same bridge pattern main.py uses for controller events.
     finished = Signal(bool, str)
-
-
-class _ActionRow(QFrame):
-    """A single full-width pressable row — used for the two entry points on
-    the logged-out view ("Set up Spotify" and "Log in with Spotify")."""
-
-    def __init__(self, text: str):
-        super().__init__()
-        self.setObjectName("row")
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
-        label = QLabel(text)
-        label.setStyleSheet("font-size: 20px; font-weight: 600;")
-        lay.addWidget(label)
-        self.set_selected(False)
-
-    def set_selected(self, selected: bool) -> None:
-        self.setStyleSheet(_row_style(selected, radius=14))
 
 
 class _LibraryRow(QFrame):
@@ -259,9 +243,9 @@ class MusicPanel(Panel):
         lay.addWidget(self._status_label)
         # Both rows live in this one view; whichever state the panel is in
         # shows one and hides the other (see _show_setup / _show_logged_out).
-        self._setup_row = _ActionRow("Set up Spotify…")
+        self._setup_row = ActionRow("Set up Spotify…")
         lay.addWidget(self._setup_row)
-        self._login_row = _ActionRow("Log in with Spotify")
+        self._login_row = ActionRow("Log in with Spotify")
         lay.addWidget(self._login_row)
         self._view_stack.addWidget(self._logged_out_view)
 
@@ -343,6 +327,11 @@ class MusicPanel(Panel):
         self._playpause_tile = Tile("play")
         self._next_tile = Tile("next")
         self._repeat_tile = _ToggleTile("repeat")
+        # Opens this song in Spotify itself. Required, not a nicety: their
+        # design guidelines say displayed metadata must always link back to the
+        # Spotify service. Last in the row so it never sits between two playback
+        # controls that get used mid-game.
+        self._open_tile = Tile("external")
         self._tiles = [
             self._like_tile,
             self._shuffle_tile,
@@ -350,6 +339,7 @@ class MusicPanel(Panel):
             self._playpause_tile,
             self._next_tile,
             self._repeat_tile,
+            self._open_tile,
         ]
         tiles_row = QHBoxLayout()
         tiles_row.setSpacing(12)
@@ -613,6 +603,10 @@ class MusicPanel(Panel):
         if self._current_track_id:
             sp.set_liked(self._current_track_id, not self._like_tile._active)
 
+    def _open_current_in_spotify(self) -> None:
+        if not open_in_spotify(self, self._pending_track or {}):
+            self._detail_status.setText("Couldn't open this song in Spotify.")
+
     def _toggle_shuffle(self) -> None:
         sp.set_shuffle(not self._shuffle_tile._active)
 
@@ -636,6 +630,7 @@ class MusicPanel(Panel):
             (self._playpause_tile, sp.play_pause),
             (self._next_tile, sp.next_track),
             (self._repeat_tile, self._cycle_repeat),
+            (self._open_tile, self._open_current_in_spotify),
         ):
             tile.action = action
 

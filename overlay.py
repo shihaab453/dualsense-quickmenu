@@ -15,9 +15,7 @@
 #   PS                  -> always closes everything, from any depth
 # Keyboard fallback for testing without a controller: arrows / Enter / Esc.
 
-import ctypes
 import random
-import time
 from datetime import datetime
 
 from PySide6.QtCore import QObject, QPropertyAnimation, QRectF, Qt, QTimer, Signal
@@ -27,8 +25,10 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 import logs
 from actions import album_art
 from actions import spotify_client as sp
+from actions import window_switcher
 from icons import render_battery_pill, render_icon
 from nav import NavStack, RowList
+from panels.appswitcher import AppSwitcherPanel
 from panels.base import Tile
 from panels.chats import ChatsPanel
 from panels.music import MusicPanel
@@ -56,6 +56,7 @@ _PANEL_CLASSES = {
     "sound": SoundPanel,
     "power": PowerPanel,
     "nowplaying": NowPlayingPanel,
+    "appswitcher": AppSwitcherPanel,
 }
 
 _MARGIN_RIGHT = 64
@@ -67,31 +68,13 @@ _ADJUST_STEP_FINE = 1  # used while Cross is held, for finer control
 _LEFT_ANCHOR_MARGIN = 210  # matches the mockup's Music panel left offset
 
 
-def _force_foreground(hwnd: int) -> None:
-    # Windows normally refuses to let a background app grab focus (anti focus-
-    # stealing). Tapping the ALT key first is the long-standing workaround that
-    # lifts the restriction. We *want* focus here: while the menu has it, the
-    # game is unfocused and ignores the D-pad presses we use for navigation.
-    #
-    # This isn't 100% reliable — Windows applies a timing-based heuristic on
-    # top of the ALT-tap trick, so it can silently lose the race under the
-    # wrong conditions. GetForegroundWindow lets us check whether it actually
-    # worked and retry a few times rather than hoping the first attempt lands.
-    VK_MENU = 0x12
-    KEYEVENTF_KEYUP = 0x0002
-    user32 = ctypes.windll.user32
-    # HWNDs are 64-bit pointers; without this, ctypes' default 32-bit return
-    # type can silently mishandle the comparison below on 64-bit Windows.
-    user32.GetForegroundWindow.restype = ctypes.c_void_p
-    user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
-
-    for attempt in range(4):
-        user32.keybd_event(VK_MENU, 0, 0, 0)
-        user32.SetForegroundWindow(hwnd)
-        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
-        if user32.GetForegroundWindow() == hwnd:
-            return
-        time.sleep(0.03 * (attempt + 1))
+# Windows normally refuses to let a background app grab focus (anti focus-
+# stealing); we *want* the overlay to grab it on open, since a game stays
+# unfocused and ignores our D-pad input otherwise. The actual mechanism —
+# tap ALT first, then SetForegroundWindow, with a verify-and-retry loop since
+# it isn't 100% reliable — lives in window_switcher.py now, shared with that
+# module's own need to focus *other* windows when the user switches apps.
+# Two call sites, one implementation, rather than the copy this used to be.
 
 
 _KEYMAP = {
@@ -378,6 +361,38 @@ def _decorative_card(caption: str) -> QFrame:
     return card
 
 
+class _AppSwitcherCard(QFrame):
+    """The home card that opens the live Alt-Tab-style switcher panel
+    (panels/appswitcher.py). Unlike Now Playing, there's no single "current"
+    thing to preview — no one obviously-right window to show a thumbnail of
+    the way Now Playing has one current track — so this is deliberately a
+    simple static icon + label, matching the visual weight of the 3 purely-
+    decorative cards, but actually functional: selectable, and opens a panel
+    on Cross the same way Now Playing's card does."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(260, 300)
+        self.setObjectName("card")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 18, 18, 18)
+        icon = QLabel()
+        icon.setPixmap(render_icon("appswitcher", "rgba(255,255,255,0.7)", 32))
+        lay.addWidget(icon)
+        lay.addStretch(1)
+        label = QLabel("Switch App")
+        label.setStyleSheet("font-size: 14px; color: rgba(255,255,255,0.55);")
+        lay.addWidget(label)
+        self.set_selected(False)
+
+    def set_selected(self, selected: bool) -> None:
+        border = "2px solid #3ddc97" if selected else "1px solid rgba(255,255,255,0.08)"
+        self.setStyleSheet(
+            f"#card {{ background: rgba(28,29,33,220); border-radius: 16px;"
+            f" border: {border}; }}"
+        )
+
+
 class OverlayWindow(QWidget):
     def __init__(self, get_battery=lambda: None, is_held=lambda name: False):
         super().__init__()
@@ -466,18 +481,22 @@ class OverlayWindow(QWidget):
         )
 
         self._now_playing_card = _NowPlayingCard()
+        self._app_switcher_card = _AppSwitcherCard()
         self._cards_widget = QWidget(self)
         cards_lay = QHBoxLayout(self._cards_widget)
         cards_lay.setSpacing(22)
         cards_lay.setContentsMargins(0, 0, 0, 0)
-        # Explicit bottom alignment on every card: they're all the same fixed
-        # height today, so this changes nothing yet, but the Now Playing card's
-        # height now varies with selection (see _NowPlayingCard's docstring) —
-        # without this, QHBoxLayout's default alignment for children shorter
-        # than the tallest one is to hang them from the top, which would visibly
-        # detach the 3 decorative cards' bottoms from the row's shared baseline
-        # the moment the real card grows taller than them.
+        # Explicit bottom alignment on every card: most are a fixed height, so
+        # this changes nothing for them, but the Now Playing card's height
+        # varies with selection (see _NowPlayingCard's docstring) — without
+        # this, QHBoxLayout's default alignment for children shorter than the
+        # tallest one is to hang them from the top, which would visibly detach
+        # the other cards' bottoms from the row's shared baseline the moment
+        # the real card grows taller than them.
         cards_lay.addWidget(self._now_playing_card, 0, Qt.AlignBottom)
+        # Next to Now Playing, per the user's own request — not a new tray
+        # icon, reached only from this card, same pattern Now Playing uses.
+        cards_lay.addWidget(self._app_switcher_card, 0, Qt.AlignBottom)
         for caption in (
             "Recently created\nNew Clip Saved",
             "Discover\nQuick Setup Tips",
@@ -543,11 +562,16 @@ class OverlayWindow(QWidget):
 
     def _focus_cards(self) -> None:
         self._home_focus = "cards"
+        # Explicit on both: RowList.__init__ also selects rows[0] (Now
+        # Playing) on construction below, but setting both here first means
+        # neither card can retain a stale selected-look from whichever one
+        # was last selected before the overlay was closed.
         self._now_playing_card.set_selected(True)
+        self._app_switcher_card.set_selected(False)
         self.nav.push(
             RowList(
-                [self._now_playing_card],
-                on_activate=lambda i, r: self._open_panel("nowplaying"),
+                [self._now_playing_card, self._app_switcher_card],
+                on_activate=self._activate_card,
                 on_select=self._update_cards_hint,
                 orientation="horizontal",
                 name="cards",
@@ -555,11 +579,20 @@ class OverlayWindow(QWidget):
         )
         self._relayout()
 
+    def _activate_card(self, index, card) -> None:
+        if card is self._now_playing_card:
+            self._open_panel("nowplaying")
+        elif card is self._app_switcher_card:
+            self._open_panel("appswitcher")
+
     def _update_cards_hint(self, index, card) -> None:
-        # Text only, matching the reference — Square isn't mapped to anything
-        # in controller.py yet, so this doesn't do anything if pressed. Cross
-        # still opens the full Now Playing panel, unchanged.
-        self._cards_hint_label.setText("Press □ for Pause")
+        if card is self._now_playing_card:
+            # Text only, matching the PS5 reference — Square isn't mapped to
+            # anything in controller.py yet, so this doesn't do anything if
+            # pressed. Cross still opens the full Now Playing panel.
+            self._cards_hint_label.setText("Press □ for Pause")
+        elif card is self._app_switcher_card:
+            self._cards_hint_label.setText("Press Cross to switch")
         self._relayout()
 
     def _go_back(self) -> None:
@@ -639,7 +672,18 @@ class OverlayWindow(QWidget):
         self._home_focus = focus
         self._scrim.hide()
         self._cards_widget.show()
-        self._now_playing_card.set_selected(focus == "cards")
+        if focus == "cards":
+            # Restore whichever of the two real cards was actually selected
+            # when its panel was opened — self.nav.current() is still that
+            # same RowList, with its selection intact, not just "always Now
+            # Playing" (true back when there was only one navigable card).
+            landed = self.nav.current()
+            selected = landed.selected_row() if landed else None
+            self._now_playing_card.set_selected(selected is self._now_playing_card)
+            self._app_switcher_card.set_selected(selected is self._app_switcher_card)
+        else:
+            self._now_playing_card.set_selected(False)
+            self._app_switcher_card.set_selected(False)
         self._relayout()
 
     # ---- open / close ----
@@ -654,6 +698,7 @@ class OverlayWindow(QWidget):
         self._scrim.hide()
         self._cards_widget.show()
         self._now_playing_card.set_selected(False)
+        self._app_switcher_card.set_selected(False)
         # Non-blocking (see get_now_playing_summary_async) — safe to fire on
         # every open, including ones where the user never navigates up to the
         # card at all.
@@ -674,7 +719,7 @@ class OverlayWindow(QWidget):
         self._relayout()
         self.raise_()
         self.activateWindow()
-        _force_foreground(int(self.winId()))
+        window_switcher.force_foreground(int(self.winId()))
         self._fade.stop()
         self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)

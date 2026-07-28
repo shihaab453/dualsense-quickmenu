@@ -2,8 +2,8 @@
 
 A PS5-style Control Center for Windows. Press the **PS button** on your
 DualSense while gaming and an overlay appears — browse and control Spotify,
-change the volume, and sleep/shut down/restart the PC — all with the
-controller, without touching your keyboard or mouse.
+change the volume, switch to another open app, and sleep/shut down/restart
+the PC — all with the controller, without touching your keyboard or mouse.
 
 ## What's in it
 
@@ -25,9 +25,14 @@ between them, Cross to open one, Circle to back out, PS again to close):
   app. Opening it (Cross) goes to the full Now Playing panel, which *does*
   also show whatever Windows itself is tracking (browsers, other players,
   etc.) when Spotify has nothing playing.
+- A **Switch App** card next to it is a controller-driven Alt-Tab — opens a
+  live list of every open, switchable window (real icon + title, no setup
+  needed), D-pad up/down to pick one, Cross switches to it and closes the
+  overlay. Built fresh from Windows itself each time it's opened, so it
+  always reflects what's actually running.
 - **Chats & Calls** isn't built yet — the icon is there, and opening it says so.
-  The home cards other than Now Playing are decorative, matching the original
-  PS5 UI they're modeled on.
+  The home cards other than Now Playing and Switch App are decorative,
+  matching the original PS5 UI they're modeled on.
 
 ## Controls
 
@@ -197,6 +202,14 @@ anywhere automatically.
   home card) falls back to Windows' media tracker when Spotify has nothing
   playing, so it can show a browser or another player; that's expected, not a
   bug.
+- **Switch App shows a generic icon for some system apps** (e.g. Windows'
+  own Settings app) — a handful of modern Windows apps don't expose their
+  real per-window icon the normal way, so those fall back to a generic file
+  icon instead of a blank row. The window itself still switches correctly.
+- **Switching doesn't bring the game to the front** — the same anti
+  focus-stealing behavior that occasionally needs a couple of tries to open
+  the overlay itself can also affect switching to another app; it retries
+  automatically, so it should resolve within a moment.
 
 ## Not yet supported (planned)
 

@@ -153,6 +153,15 @@ def _selftest() -> int:
 
     check("log file writable", os.path.exists(logs.log_path()))
 
+    try:
+        from actions import window_switcher
+        window_count = len(window_switcher.list_switchable_windows())
+        check("window enumeration works (Alt-Tab-style switcher)", True,
+              f"{window_count} switchable windows found")
+    except Exception as e:
+        check("window enumeration works (Alt-Tab-style switcher)", False,
+              f"{type(e).__name__}: {e}")
+
     passed = all(results)
     emit("all checks passed" if passed else "SELFTEST FAILED")
     return 0 if passed else 1

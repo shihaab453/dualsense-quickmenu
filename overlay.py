@@ -470,9 +470,18 @@ class OverlayWindow(QWidget):
             panel = self._active_panel
             panel.adjustSize()
             if getattr(panel, "anchor", "center") == "left":
-                # Clamped so a narrower window never pushes the panel
-                # partly off-screen — falls back toward center-ish instead.
-                x = min(_LEFT_ANCHOR_MARGIN, max(0, w - panel.width()))
+                # On a screen wide enough, hold the mockup's 210px left offset.
+                # On a narrower one, center instead — min(_LEFT_ANCHOR_MARGIN,
+                # w - panel.width()) used to be the fallback here, but that
+                # expression picks x = w - panel.width() once the margin no
+                # longer fits, which flushes the panel's right edge exactly
+                # against the screen's right edge (zero right margin) rather
+                # than the "center-ish" result the comment described. Visible
+                # on any screen narrower than panel.width() + 210 — e.g. a
+                # 1707px-wide screen with Music's 1500px panel, where it
+                # clamped to x=207 and sat flush against the right edge.
+                max_x = w - panel.width()
+                x = _LEFT_ANCHOR_MARGIN if max_x >= _LEFT_ANCHOR_MARGIN else max(0, max_x // 2)
             else:
                 x = (w - panel.width()) // 2
             panel.move(x, content_bottom - panel.height())

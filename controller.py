@@ -13,6 +13,19 @@ import logs
 log = logs.get(__name__)
 
 
+# Left unset until _new_device()'s first real call — see its docstring for
+# why the import itself is deferred. Also what makes the class swappable for
+# testing: assigning `controller.pydualsense = FakeClass` before the listener
+# starts means the `if pydualsense is None` check below is already false, so
+# _new_device() uses the fake instead of importing the real one. An earlier
+# version did `from pydualsense import pydualsense` as a *local* import inside
+# the function, which silently shadowed this module attribute — any test
+# monkeypatch was a no-op, and it went unnoticed as long as no real controller
+# was plugged in during a test run (the real import failing "no device found"
+# looked identical to the fake one failing).
+pydualsense = None
+
+
 def _new_device():
     """Constructs a pydualsense object, importing the library on first use
     rather than at module import.
@@ -23,9 +36,13 @@ def _new_device():
     would otherwise kill the whole app during startup, before logging is even
     configured, leaving nothing to diagnose it with. Deferred, it becomes a
     logged warning on a background thread instead, and the tray, overlay and
-    keyboard fallback all keep working."""
-    from pydualsense import pydualsense
-
+    keyboard fallback all keep working. The import only actually happens once
+    (cached into the module attribute above) — later reconnect attempts reuse
+    it rather than re-importing every 2 seconds forever."""
+    global pydualsense
+    if pydualsense is None:
+        from pydualsense import pydualsense as _real_pydualsense
+        pydualsense = _real_pydualsense
     return pydualsense()
 
 # pydualsense state attribute -> name used by the rest of the app

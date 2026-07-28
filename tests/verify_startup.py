@@ -84,14 +84,28 @@ check("marking twice is harmless",
 
 # ----------------------------------------------------------- single instance
 print("\n[single-instance guard]")
+# A test-only mutex name, never the real one — the actual app may genuinely be
+# running on this machine while these tests run (it's common to be testing the
+# real app by hand in one window and the suite in another), and colliding with
+# that would fail this section for a reason that has nothing to do with the
+# code being tested. The child processes below get the same override baked
+# into their inline script, since each does its own fresh `import
+# single_instance` and would otherwise touch the real name too.
+TEST_MUTEX = r"Local\DualSenseQuickMenu.SingleInstance__TEST__"
+single_instance._MUTEX_NAME = TEST_MUTEX
+_child_setup = (
+    "import sys; sys.path.insert(0, r'" + _ROOT + "');"
+    " import single_instance;"
+    " single_instance._MUTEX_NAME = " + repr(TEST_MUTEX) + ";"
+)
+
 check("first caller in a process gets the lock",
       single_instance.already_running() is False)
 
 # The real test: another *process* must see the lock this one now holds.
 probe = subprocess.run(
     [sys.executable, "-c",
-     "import sys; sys.path.insert(0, r'" + _ROOT + "');"
-     " import single_instance;"
+     _child_setup +
      " print('LOCKED' if single_instance.already_running() else 'FREE')"],
     capture_output=True,
     text=True,
@@ -103,8 +117,7 @@ check("a second process sees the lock", "LOCKED" in probe.stdout,
 # acquire it — verified by checking a subprocess that runs *without* a holder.
 probe = subprocess.run(
     [sys.executable, "-c",
-     "import sys; sys.path.insert(0, r'" + _ROOT + "');"
-     " import single_instance;"
+     _child_setup +
      " print('LOCKED' if single_instance.already_running() else 'FREE');"
      " print('LOCKED2' if single_instance.already_running() else 'FREE2')"],
     capture_output=True,

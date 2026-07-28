@@ -46,15 +46,29 @@ check("numeric_version is a 4-tuple of ints",
 # pre-release counter has to survive as the fourth component.
 _real_version = version.VERSION
 for text, expected in [
-    ("0.1.0-alpha.1", (0, 1, 0, 1)),
-    ("0.2.0-beta.3", (0, 2, 0, 3)),
+    ("0.1.0-alpha.1", (0, 1, 0, 100)),
+    ("0.1.0-alpha.1.1", (0, 1, 0, 101)),   # must not collide with alpha.1
+    ("0.1.0-alpha.2", (0, 1, 0, 200)),
+    ("0.2.0-beta.3", (0, 2, 0, 300)),
     ("1.0.0", (1, 0, 0, 0)),
-    ("1.2", (1, 2, 0, 0)),          # short form still yields 4 components
-    ("2.0.1-rc", (2, 0, 1, 0)),     # non-numeric suffix, no counter
+    ("1.2", (1, 2, 0, 0)),           # short form still yields 4 components
+    ("2.0.1-rc", (2, 0, 1, 0)),      # non-numeric suffix, no counter
+    ("0.1.0-alpha.1.150", (0, 1, 0, 199)),  # second counter capped at 99...
 ]:
     version.VERSION = text
     check(f"{text!r} -> {expected}", version.numeric_version() == expected,
           f"(got {version.numeric_version()})")
+
+# ...because ordering must survive: a second-level counter can never let a
+# build outrank the next first-level one.
+def _numeric(text):
+    version.VERSION = text
+    return version.numeric_version()
+
+check("alpha.1.1 sorts above alpha.1",
+      _numeric("0.1.0-alpha.1.1") > _numeric("0.1.0-alpha.1"))
+check("alpha.2 sorts above any alpha.1.x",
+      _numeric("0.1.0-alpha.2") > _numeric("0.1.0-alpha.1.150"))
 version.VERSION = _real_version
 
 # ----------------------------------------------------------------- first run

@@ -12,7 +12,7 @@
 #   1.0.0          — public
 
 APP_NAME = "DualSense Quick Menu"
-VERSION = "0.1.0-alpha.1.1"
+VERSION = "0.1.0-alpha.2"
 
 # Shown in the Settings window footer, so the app states its authorship and
 # terms at the interface rather than only in a file someone has to go find.

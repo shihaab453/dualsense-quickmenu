@@ -3,3 +3,14 @@ __pycache__/
 *.pyc
 build/
 dist/
+
+# OS/editor cruft — none of this is project-specific, just cheap insurance
+# against someone (a future contributor, a different machine) committing it
+# by accident.
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.egg-info/
+.pytest_cache/

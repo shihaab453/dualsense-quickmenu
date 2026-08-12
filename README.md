@@ -63,10 +63,14 @@ it too.
 
 ## Setup
 
-### Option A — download the build (recommended)
+### Option A — prebuilt Windows build
 
-1. Download `DualSenseQuickMenu-windows.zip` and extract it anywhere (about
-   126 MB extracted).
+This project is in closed alpha testing right now, so the build isn't posted
+here as a public download yet — if you're one of the testers, you'll have
+gotten `DualSenseQuickMenu-windows.zip` directly. (If you're reading this on
+GitHub and want it, ask.)
+
+1. Extract the zip anywhere (about 126 MB extracted).
 2. Plug in the DualSense with a **USB cable** (Bluetooth not supported yet).
 3. Run `DualSenseQuickMenu.exe`. No Python needed.
 

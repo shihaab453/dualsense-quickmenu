@@ -39,6 +39,7 @@ There's no CI, so please run the checks yourself:
 .venv\Scripts\python.exe tests\verify_panel_anchor.py
 .venv\Scripts\python.exe tests\verify_now_playing_card.py
 .venv\Scripts\python.exe tests\verify_appswitcher.py
+.venv\Scripts\python.exe tests\verify_hotkey.py
 ```
 
 All four should exit 0. If you changed anything that ends up in a build, also

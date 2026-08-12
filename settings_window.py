@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 import diagnostics
+import hotkey
 import logs
 import settings
 import startup
@@ -195,6 +196,37 @@ class SettingsWindow(QDialog):
         fullscreen_note.setWordWrap(True)
         fullscreen_note.setTextFormat(Qt.RichText)
         lay.addWidget(fullscreen_note)
+
+        # No live control over this here — the real HotkeyListener lives in
+        # main.py, started once at app launch — just visibility into whether
+        # it actually took. reload() below keeps this current each time the
+        # window is opened.
+        hotkey_note = QLabel(
+            f"<b>No controller handy?</b> Press <b>{hotkey.DISPLAY_NAME}</b> "
+            "anywhere to open or close the overlay — it works the same as the "
+            "PS button, even while a game has focus."
+        )
+        hotkey_note.setObjectName("hint")
+        hotkey_note.setWordWrap(True)
+        hotkey_note.setTextFormat(Qt.RichText)
+        lay.addWidget(hotkey_note)
+
+        self._hotkey_status = QLabel()
+        self._hotkey_status.setObjectName("status")
+        self._hotkey_status.setWordWrap(True)
+        lay.addWidget(self._hotkey_status)
+
+    def _refresh_hotkey_status(self) -> None:
+        registered = diagnostics.hotkey_registered()
+        if registered is None:
+            self._hotkey_status.setText("")
+        elif registered:
+            self._hotkey_status.setText(f"{hotkey.DISPLAY_NAME} is active.")
+        else:
+            self._hotkey_status.setText(
+                f"{hotkey.DISPLAY_NAME} could not be registered — another "
+                "running app likely already uses it."
+            )
 
     def _on_startup_toggled(self, checked: bool) -> None:
         # Guard against reacting to reload() setting the box programmatically,
@@ -418,6 +450,7 @@ class SettingsWindow(QDialog):
         self._startup_checkbox.setChecked(startup.is_enabled())
         self._loading = False
         self._startup_status.setText("")
+        self._refresh_hotkey_status()
         self._refresh_spotify_status()
 
 

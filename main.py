@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 import diagnostics
+import hotkey
 import logs
 import resources
 import settings
@@ -68,8 +69,10 @@ def _load_app_font() -> bool:
     return True
 
 
-class ControllerBridge(QObject):
-    """Carries controller events onto the Qt main thread.
+class InputBridge(QObject):
+    """Carries background-thread input events onto the Qt main thread — real
+    controller presses (DualSenseListener) and the global hotkey
+    (hotkey.HotkeyListener) alike.
 
     Qt widgets must only ever be touched from the main thread. Emitting a Qt
     signal from another thread automatically queues the call onto the main
@@ -78,6 +81,7 @@ class ControllerBridge(QObject):
 
     button_pressed = Signal(str)
     connection_changed = Signal(bool)
+    hotkey_pressed = Signal()
 
 
 def _make_tray_icon() -> QIcon:
@@ -184,8 +188,9 @@ def _run_first_launch(tray: QSystemTrayIcon) -> None:
         # game" is the most likely report — it's a Windows limitation, not a bug,
         # so the cheapest fix is telling people before they hit it.
         "It lives in your system tray — press the PS button on your controller "
-        "to open it. Set your games to Borderless (not Fullscreen) so the "
-        "overlay can draw on top.",
+        f"to open it, or {hotkey.DISPLAY_NAME} if you don't have one handy. "
+        "Set your games to Borderless (not Fullscreen) so the overlay can "
+        "draw on top.",
         QIcon(render_app_icon(64)),
         15000,
     )
@@ -236,7 +241,7 @@ def main() -> None:
         box.exec()
         sys.exit(0)
 
-    bridge = ControllerBridge()
+    bridge = InputBridge()
     listener = DualSenseListener(
         on_button=bridge.button_pressed.emit,
         on_connection_change=bridge.connection_changed.emit,
@@ -248,17 +253,28 @@ def main() -> None:
     bridge.button_pressed.connect(overlay.handle_button)
     bridge.connection_changed.connect(overlay.set_controller_connected)
 
+    # The global hotkey stands in for the PS button itself: handle_button("ps")
+    # already opens the overlay if it's closed and closes it if it's open,
+    # exactly what a real PS press does, so the hotkey needs no logic of its
+    # own beyond triggering that same call.
+    hotkey_listener = hotkey.HotkeyListener(on_pressed=bridge.hotkey_pressed.emit)
+    bridge.hotkey_pressed.connect(lambda: overlay.handle_button("ps"))
+
     # Lets Settings -> Copy diagnostics state whether a controller is actually
     # connected. Registered as a probe rather than imported, so diagnostics.py
     # doesn't need to reach back into main.
     diagnostics.register_controller_probe(
         lambda: (listener.connected, listener.battery_percent)
     )
+    diagnostics.register_hotkey_probe(lambda: hotkey_listener.registered)
 
     tray = QSystemTrayIcon(_make_tray_icon())
     tray.setToolTip(f"{version.APP_NAME} {version.VERSION}")
     tray_menu = QMenu()
-    tray_menu.addAction("Show menu").triggered.connect(overlay.open_menu)
+    # The hotkey is mentioned in the label itself (not bound as this QAction's
+    # own Qt shortcut, which would only fire while the tray menu has focus) —
+    # this is purely where someone would discover the real, global one exists.
+    tray_menu.addAction(f"Show menu ({hotkey.DISPLAY_NAME})").triggered.connect(overlay.open_menu)
     # First-run setup (the Spotify client ID) can't happen on the D-pad-driven
     # overlay — see settings_window's module docstring.
     tray_menu.addAction("Settings…").triggered.connect(settings_window.open_settings)
@@ -273,8 +289,10 @@ def main() -> None:
         overlay.open_menu()
 
     listener.start()
+    hotkey_listener.start()
     exit_code = app.exec()
     listener.stop()
+    hotkey_listener.stop()
     sys.exit(exit_code)
 
 

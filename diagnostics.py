@@ -21,6 +21,7 @@ import platform
 import re
 import sys
 
+import hotkey
 import logs
 import version
 from actions import spotify_client as sp
@@ -41,12 +42,23 @@ _MAX_LINE_LENGTH = 150
 # window opened before startup finished), in which case the controller line
 # says so rather than guessing.
 _controller_probe = None
+_hotkey_probe = None
 
 
 def register_controller_probe(probe) -> None:
     """probe() should return (connected: bool, battery_percent: int | None)."""
     global _controller_probe
     _controller_probe = probe
+
+
+def register_hotkey_probe(probe) -> None:
+    """probe() should return bool: whether the global hotkey (hotkey.py)
+    actually registered with Windows. A silent registration failure — most
+    likely another app already holding Ctrl+Alt+Space — would otherwise leave
+    someone wondering why the hotkey "does nothing"; this is how that shows
+    up in a diagnostics report instead of nowhere."""
+    global _hotkey_probe
+    _hotkey_probe = probe
 
 
 def _redact(text: str) -> str:
@@ -87,6 +99,31 @@ def _controller_line() -> str:
     return f"connected, battery {battery}%" if battery is not None else "connected"
 
 
+def hotkey_registered() -> bool | None:
+    """Whether the global hotkey actually registered with Windows, or None if
+    that isn't knowable yet (app still starting up). Public — settings_window
+    uses this too, to show live status next to the hotkey it can't itself
+    control (that lives in main.py's HotkeyListener)."""
+    if _hotkey_probe is None:
+        return None
+    try:
+        return bool(_hotkey_probe())
+    except Exception:
+        log.exception("Hotkey probe failed")
+        return None
+
+
+def _hotkey_line() -> str:
+    registered = hotkey_registered()
+    if registered is None:
+        return "unknown (app not fully started)"
+    return (
+        f"active ({hotkey.DISPLAY_NAME} opens/closes the overlay)"
+        if registered
+        else f"NOT active — {hotkey.DISPLAY_NAME} is likely already bound by another app"
+    )
+
+
 def _recent_problems() -> tuple:
     """(lines, total_count) for the warnings and errors in the log, newest last."""
     try:
@@ -122,6 +159,7 @@ def report() -> str:
         f"Python {platform.python_version()} / PySide6 {pyside_version}",
         "",
         f"Controller: {_controller_line()}",
+        f"Global hotkey: {_hotkey_line()}",
         f"Spotify: {_spotify_line()}",
         f"Log file: {_redact(logs.log_path())}",
     ]

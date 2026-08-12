@@ -44,9 +44,22 @@ between them, Cross to open one, Circle to back out, PS again to close):
 | **Cross (X)** | Activate the selected item (hold while adjusting a slider for finer 1% steps instead of 2%) |
 | **Circle (O)** | Back out one level (closes the menu entirely from the top level) |
 
-Keyboard fallback for testing without a controller: arrow keys, Enter, Esc
-(there's no keyboard equivalent for the PS button itself — use the tray
-icon's **Show menu**, or `--demo`, to open it).
+## Using it without a controller
+
+Press **Ctrl+Alt+P** anywhere — even while a game has focus — to open or close
+the overlay, exactly like the PS button. This isn't just for testing: if you
+don't always have the controller plugged in, this is a full second way to use
+the app day to day, not a fallback.
+
+Once it's open, arrow keys move the selection, **Enter** activates it, and
+**Esc** backs out — the same as D-pad/Cross/Circle. The one thing a keyboard
+can't do on its own is *open* the menu in the first place, which is exactly
+what Ctrl+Alt+P is for; the right-click tray icon's **Show menu** works too.
+
+If Ctrl+Alt+P doesn't do anything, another running app has probably already
+claimed that combination — Settings shows whether it actually registered
+(right-click the tray icon → **Settings…**), and **Copy diagnostics** reports
+it too.
 
 ## Setup
 
@@ -178,7 +191,10 @@ anywhere automatically.
 
 - **PS button does nothing** — make sure the controller is on USB and that no
   other tool (DS4Windows, Steam with "PlayStation Controller Support" enabled)
-  is capturing the controller.
+  is capturing the controller. Ctrl+Alt+P works either way in the meantime.
+- **Ctrl+Alt+P does nothing** — another running app most likely already has
+  that combination bound to something else. Settings shows whether it
+  actually registered.
 - **Menu doesn't appear over the game** — the game is in exclusive fullscreen;
   switch it to borderless windowed.
 - **Music panel says "Set up Spotify…"** — no client ID has been saved yet.

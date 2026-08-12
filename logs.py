@@ -13,8 +13,8 @@
 #   sys.excepthook         — uncaught on the main thread, including inside Qt
 #                            slots (PySide6 routes those here)
 #   threading.excepthook   — uncaught on a background thread, and this app has
-#                            three: controller polling, album art fetching,
-#                            and the Spotify login flow
+#                            four: controller polling, album art fetching, the
+#                            Spotify login flow, and the global hotkey listener
 #   qInstallMessageHandler — Qt's own diagnostics (missing plugins, bad
 #                            stylesheets), which are emitted from Qt's C++ side
 #                            and never become Python exceptions at all

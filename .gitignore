@@ -14,3 +14,4 @@ desktop.ini
 .idea/
 *.egg-info/
 .pytest_cache/
+HANDOFF.md

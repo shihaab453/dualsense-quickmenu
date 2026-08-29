@@ -100,7 +100,7 @@ def _selftest() -> int:
     hidapi.dll means the PS button never responds — none of which raise.
 
     Returns a process exit code: 0 if everything checks out."""
-    from icons import render_icon
+    from icons import render_icon, render_spotify_logo
 
     results = []
 
@@ -136,6 +136,15 @@ def _selftest() -> int:
         )
     check("SVG icons render (QtSvg present)", opaque_pixels > 0,
           f"{opaque_pixels} visible pixels")
+
+    # The Spotify logo SVG is listed by hand in the spec's `datas`, same as
+    # the font — a missing file raises here rather than leaving the Now
+    # Playing card's logo slot silently blank.
+    try:
+        logo_pixmap = render_spotify_logo(24)
+        check("Spotify logo asset loads", not logo_pixmap.isNull())
+    except Exception as e:
+        check("Spotify logo asset loads", False, f"{type(e).__name__}: {e}")
 
     try:
         import pydualsense  # noqa: F401

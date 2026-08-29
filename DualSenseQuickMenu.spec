@@ -9,7 +9,7 @@
 # (windowed builds have no console, so read the results from
 # %APPDATA%\DualSenseQuickMenu\log.txt)
 #
-# Three things here are load-bearing and none of them fail loudly if dropped:
+# Four things here are load-bearing and none of them fail loudly if dropped:
 #
 # 1. hidapi.dll. pydualsense ships this DLL inside its own package directory
 #    and, at import time, appends dirname(__file__) to os.environ["PATH"] so
@@ -28,7 +28,11 @@
 #    _AVAILABLE = False, so a missing winrt doesn't crash — the Now Playing
 #    fallback for non-Spotify players just quietly stops working.
 #
-# --selftest checks all three, which is why it exists.
+# 4. The Spotify logo SVG (icons.render_spotify_logo, loaded via
+#    resources.path()) — same failure mode as the font: missing in a build,
+#    the Now Playing home card's reserved logo slot just renders blank.
+#
+# --selftest checks all four, which is why it exists.
 
 import importlib.util
 import os
@@ -84,6 +88,7 @@ binaries = [
 
 datas = [
     ("assets/fonts/Manrope.ttf", "assets/fonts"),
+    ("assets/Primary_Logo_Green_RGB.svg", "assets"),
     # The obligation to reproduce dependency copyright notices applies to what
     # is *distributed*, so these have to be inside the build, not just in the
     # repo. Regenerate with tools/make_notices.py when dependencies change.

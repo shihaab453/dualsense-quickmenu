@@ -26,7 +26,7 @@ import logs
 from actions import album_art
 from actions import spotify_client as sp
 from actions import window_switcher
-from icons import render_battery_pill, render_icon
+from icons import render_battery_pill, render_icon, render_spotify_logo
 from nav import NavStack, RowList
 from panels.appswitcher import AppSwitcherPanel
 from panels.base import Tile
@@ -192,11 +192,12 @@ class _NowPlayingCard(QFrame):
         top_row_widget = QWidget()
         top_row = QHBoxLayout(top_row_widget)
         top_row.setContentsMargins(0, 0, 0, 0)
-        # Reserved and left empty on purpose — the real Spotify logo asset
-        # goes here once supplied. Never approximate or redraw their mark;
-        # their design guidelines are explicit that it must not be modified.
+        # The real Spotify glyph, from their official brand kit — see
+        # icons.render_spotify_logo. Never recolored/redrawn; their design
+        # guidelines are explicit that the mark must not be modified.
         self._logo_slot = QLabel()
         self._logo_slot.setFixedSize(24, 24)
+        self._logo_slot.setPixmap(render_spotify_logo(24))
         top_row.addWidget(self._logo_slot)
         top_row.addStretch(1)
         self._indicator = _PlayingIndicator(20)

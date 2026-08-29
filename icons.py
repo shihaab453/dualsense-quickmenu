@@ -14,10 +14,12 @@
 
 import re
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLabel
+
+import resources
 
 # The app's own branding mark — the blue "PS" disc used for the tray icon and,
 # via tools/make_icon.py, the .exe's icon. Drawn in code at whatever size is
@@ -108,6 +110,35 @@ def render_icon(name: str, color: str, size: int) -> QPixmap:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
     renderer.render(painter)
+    painter.end()
+    return pixmap
+
+
+_spotify_logo_svg = None  # lazily loaded, cached — the file never changes at runtime
+
+
+def render_spotify_logo(size: int) -> QPixmap:
+    """The real Spotify glyph, from their official brand kit
+    (assets/Primary_Logo_Green_RGB.svg) — unlike render_icon(), this is never
+    recolored or tinted, since Spotify's guidelines forbid modifying their
+    mark. Scaled uniformly (never stretched) to fit inside `size`x`size` and
+    centered, since the source viewBox isn't perfectly square."""
+    global _spotify_logo_svg
+    if _spotify_logo_svg is None:
+        with open(resources.path("assets", "Primary_Logo_Green_RGB.svg"), "r", encoding="utf-8") as f:
+            _spotify_logo_svg = f.read()
+    renderer = QSvgRenderer(QByteArray(_spotify_logo_svg.encode("utf-8")))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    vbox = renderer.viewBoxF()
+    if vbox.width() and vbox.height():
+        scale = min(size / vbox.width(), size / vbox.height())
+        w, h = vbox.width() * scale, vbox.height() * scale
+        renderer.render(painter, QRectF((size - w) / 2, (size - h) / 2, w, h))
+    else:
+        renderer.render(painter)
     painter.end()
     return pixmap
 

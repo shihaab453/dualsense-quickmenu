@@ -15,3 +15,15 @@ desktop.ini
 *.egg-info/
 .pytest_cache/
 CLAUDE.md
+HANDOFF.md
+
+# Spotify's official brand kit was supplied as a full download (print
+# formats, every color/CMYK/PMS variant) — only the one SVG icons.py actually
+# loads is tracked; the rest stays local-only so the repo doesn't carry ~4MB
+# of unused .ai/.eps/.pdf files.
+assets/*.ai
+assets/*.eps
+assets/*.pdf
+assets/Primary_Logo_*.svg
+!assets/Primary_Logo_Green_RGB.svg
+assets/Spotify_Primary_Logo_RGB_*.png

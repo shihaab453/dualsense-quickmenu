@@ -1,6 +1,6 @@
 # Stops a second copy of the app from running.
 #
-# Two copies means two HID pollers at 100Hz fighting over the same controller,
+# Two copies means two HID pollers fighting over the same controller,
 # and two overlays both calling SetForegroundWindow — which is a bad first
 # impression, and easy to trigger by accident: the app has no window, so
 # double-clicking the exe a second time because "nothing happened" is the

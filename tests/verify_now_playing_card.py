@@ -109,8 +109,10 @@ REAL_TRACK["album"]["name"] = "Test Album"
 summary = sp.get_now_playing_summary()
 check("title comes through", summary["title"] == "Test Song")
 check("artists are joined", summary["artists"] == "Artist One, Artist Two")
-check("art_url picks the smallest image (last in Spotify's list)",
-      summary["art_url"] == "http://example.invalid/large.jpg")
+check("art_url picks the largest image (first in Spotify's list) — the "
+      "home card displays it well above thumbnail size, so the smallest "
+      "image Spotify offers renders visibly blurry",
+      summary["art_url"] == "http://example.invalid/small.jpg")
 check("is_playing comes through", summary["is_playing"] is True)
 check("source_name resolves via the album", summary["source_name"] == "Test Album")
 

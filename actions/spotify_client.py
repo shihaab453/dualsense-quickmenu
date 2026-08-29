@@ -247,7 +247,7 @@ def get_now_playing_summary() -> dict | None:
         "track": track,
         "title": track.get("name") or "(unknown title)",
         "artists": ", ".join(a["name"] for a in track.get("artists", [])),
-        "art_url": album_art.smallest_image_url(track),
+        "art_url": album_art.largest_image_url(track),
         "is_playing": bool(playback.get("is_playing")),
         "source_name": resolve_context_name(playback),
     }

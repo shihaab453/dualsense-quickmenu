@@ -1,38 +1,38 @@
 # DualSense Quick Menu
 
 A PS5-style Control Center for Windows. Press the **PS button** on your
-DualSense while gaming and an overlay appears — browse and control Spotify,
-change the volume, switch to another open app, and sleep/shut down/restart
-the PC — all with the controller, without touching your keyboard or mouse.
+DualSense while gaming and an overlay pops up. From there you can browse and
+control Spotify, change the volume, switch to another open app, and
+sleep/shut down/restart the PC, all with the controller and without touching
+your keyboard or mouse.
 
 ## What's in it
 
 Pressing PS opens a tray of icons along the bottom (D-pad left/right to move
 between them, Cross to open one, Circle to back out, PS again to close):
 
-- **Music** — log in with Spotify once, then browse Liked Songs and your
+- **Music**: log in with Spotify once, then browse Liked Songs and your
   playlists, play a track, and control like/shuffle/previous/play-pause/
-  next/repeat. The last control opens the current song in Spotify itself.
-  Requires **Spotify Premium** for playback control (free accounts can browse
-  but Spotify itself blocks remote control).
-- **Sound** — output/input device names, master volume, mic mute, mic
-  volume.
-- **Power** — Sleep, Shut Down, Restart.
+  next/repeat. The last one opens the current song in Spotify itself.
+  Playback control needs **Spotify Premium** (free accounts can still browse,
+  Spotify just blocks remote control for them).
+- **Sound**: output/input device names, master volume, mic mute, mic volume.
+- **Power**: Sleep, Shut Down, Restart.
 - A **Now Playing** card on the home screen (D-pad up from the tray) shows
-  what's currently playing on Spotify — real album art, title, and (once
-  selected) the artist and what playlist/album it's from. Spotify only: if
-  nothing's playing there, the card says so rather than showing some other
-  app. Opening it (Cross) goes to the full Now Playing panel, which *does*
-  also show whatever Windows itself is tracking (browsers, other players,
-  etc.) when Spotify has nothing playing.
-- A **Switch App** card next to it is a controller-driven Alt-Tab — opens a
-  live list of every open, switchable window (real icon + title, no setup
-  needed), D-pad up/down to pick one, Cross switches to it and closes the
-  overlay. Built fresh from Windows itself each time it's opened, so it
-  always reflects what's actually running.
-- **Chats & Calls** isn't built yet — the icon is there, and opening it says so.
-  The home cards other than Now Playing and Switch App are decorative,
-  matching the original PS5 UI they're modeled on.
+  what's currently playing on Spotify: real album art, title, and (once
+  selected) the artist and what playlist or album it's from. It only shows
+  Spotify, so if nothing's playing there, the card just says so instead of
+  showing some other app. Opening it with Cross goes to the full Now Playing
+  panel, which *does* also show whatever Windows itself is tracking
+  (browsers, other players, etc.) when Spotify has nothing playing.
+- A **Switch App** card next to it works like a controller-driven Alt-Tab. It
+  opens a live list of every open, switchable window (real icon and title, no
+  setup needed); D-pad up/down picks one, and Cross switches to it and closes
+  the overlay. It's built fresh from Windows itself every time it's opened,
+  so it always reflects what's actually running.
+- **Chats & Calls** isn't built yet. The icon is there, and opening it just
+  says so. The home cards other than Now Playing and Switch App are
+  decorative, matching the original PS5 UI they're modeled on.
 
 ## Controls
 
@@ -46,50 +46,50 @@ between them, Cross to open one, Circle to back out, PS again to close):
 
 ## Using it without a controller
 
-Press **Ctrl+Alt+P** anywhere — even while a game has focus — to open or close
+Press **Ctrl+Alt+P** anywhere, even while a game has focus, to open or close
 the overlay, exactly like the PS button. This isn't just for testing: if you
-don't always have the controller plugged in, this is a full second way to use
-the app day to day, not a fallback.
+don't always have the controller plugged in, it's a full second way to use
+the app day to day, not just a fallback.
 
 Once it's open, arrow keys move the selection, **Enter** activates it, and
-**Esc** backs out — the same as D-pad/Cross/Circle. The one thing a keyboard
+**Esc** backs out, the same as D-pad/Cross/Circle. The one thing a keyboard
 can't do on its own is *open* the menu in the first place, which is exactly
-what Ctrl+Alt+P is for; the right-click tray icon's **Show menu** works too.
+what Ctrl+Alt+P is for. The tray icon's right-click **Show menu** works too.
 
 If Ctrl+Alt+P doesn't do anything, another running app has probably already
-claimed that combination — Settings shows whether it actually registered
+claimed that combination. Settings shows whether it actually registered
 (right-click the tray icon → **Settings…**), and **Copy diagnostics** reports
 it too.
 
 ## Setup
 
-### Option A — prebuilt Windows build
+### Option A: prebuilt Windows build
 
 This project is in closed alpha testing right now, so the build isn't posted
-here as a public download yet — if you're one of the testers, you'll have
+here as a public download yet. If you're one of the testers, you'll have
 gotten `DualSenseQuickMenu-windows.zip` directly. (If you're reading this on
-GitHub and want it, ask.)
+GitHub and want it, just ask.)
 
 1. Extract the zip anywhere (about 126 MB extracted).
 2. Plug in the DualSense with a **USB cable** (Bluetooth not supported yet).
 3. Run `DualSenseQuickMenu.exe`. No Python needed.
 
-The first time you run it, a notification confirms it's running and the Settings
-window opens so you can connect Spotify. After that it starts
-silently into the tray — if you run it again while it's already running, it'll
+The first time you run it, a notification confirms it's running and the
+Settings window opens so you can connect Spotify. After that it starts
+silently into the tray. Run it again while it's already running and it'll
 just point you back at the tray icon.
 
-The app lives in the system tray (blue "PS" icon) — right-click it for
-**Show menu**, **Settings…** and **Quit**. Windows may show a
-"Windows protected your PC" SmartScreen warning the first time, because the
-build isn't code-signed; **More info → Run anyway**.
+The app lives in the system tray (blue "PS" icon). Right-click it for
+**Show menu**, **Settings…**, and **Quit**. Windows may show a "Windows
+protected your PC" SmartScreen warning the first time, because the build
+isn't code-signed yet. Click **More info → Run anyway**.
 
 To start it automatically when you log in, tick **Start with Windows** in
 Settings (right-click the tray icon → **Settings…**).
 
 Then follow **Spotify setup** below.
 
-### Option B — run from source
+### Option B: run from source
 
 1. Install dependencies (one time):
    ```
@@ -108,8 +108,8 @@ Then follow **Spotify setup** below.
    `main.py --demo` opens the menu immediately on launch, for testing.
 
 To run it with **no console window**, create a shortcut whose target is
-`pythonw.exe` from the venv, followed by the full path to `main.py` — e.g. if
-you cloned to `C:\Apps\dualsense-quickmenu`:
+`pythonw.exe` from the venv, followed by the full path to `main.py`. For
+example, if you cloned to `C:\Apps\dualsense-quickmenu`:
 
 ```
 C:\Apps\dualsense-quickmenu\.venv\Scripts\pythonw.exe C:\Apps\dualsense-quickmenu\main.py
@@ -125,11 +125,11 @@ start automatically when you log in.
 .venv\Scripts\python.exe tools\build.py
 ```
 
-That runs PyInstaller, then runs the built exe's `--selftest`, and only zips it
-into `dist\DualSenseQuickMenu-windows.zip` if every check passes. The selftest
-step isn't skippable on purpose: the ways a packaged build of this app breaks
-are all silent (blank icons, wrong font, dead PS button), so "it built" on its
-own doesn't tell you much.
+That runs PyInstaller, then runs the built exe's `--selftest`, and only zips
+it into `dist\DualSenseQuickMenu-windows.zip` if every check passes. The
+selftest step isn't skippable on purpose: the ways a packaged build of this
+app breaks are all silent (blank icons, wrong font, dead PS button), so "it
+built" on its own doesn't tell you much.
 
 ## Spotify setup
 
@@ -137,10 +137,11 @@ This takes two steps the first time: a one-off **client ID**, then logging in.
 
 ### 1. Your own Spotify client ID
 
-Spotify only lets an app talk to its API on behalf of people the app's creator
-has added by hand — up to 25 of them — until the app goes through Spotify's
-review. Rather than everyone sharing one app and hitting that wall, you create
-your own free one, which always works for the account that made it.
+Spotify only lets an app talk to its API on behalf of people the app's
+creator has added by hand, up to 25 of them, until the app goes through
+Spotify's review. Rather than everyone sharing one app and hitting that wall,
+you create your own free one, which always works for the account that made
+it.
 
 Right-click the tray icon → **Settings…** → **Spotify**, then:
 
@@ -148,8 +149,8 @@ Right-click the tray icon → **Settings…** → **Spotify**, then:
    account.
 2. Click **Create app**. Any name and description will do.
 3. Copy the **Redirect URI** shown in the Settings window
-   (`http://127.0.0.1:8888/callback`) into the app's **Redirect URIs** box —
-   it has to match exactly.
+   (`http://127.0.0.1:8888/callback`) into the app's **Redirect URIs** box.
+   It has to match exactly.
 4. Tick **Web API**, save, then copy the app's **Client ID** and paste it into
    the Settings window's **Your Client ID** box. Press **Save**.
 
@@ -158,27 +159,27 @@ needed for this part.
 
 ### 2. Logging in
 
-Open the Music panel and select **Log in with Spotify** — your default browser
-opens to Spotify's own login page; approve access and you're returned to a
-local page you can close. Press the PS button again afterward to bring the
-overlay back (logging in takes window focus away, same as any browser action
-would).
+Open the Music panel and select **Log in with Spotify**. Your default
+browser opens to Spotify's own login page. Approve access and you're
+returned to a local page you can close. Press the PS button again afterward
+to bring the overlay back (logging in takes window focus away, same as any
+browser action would).
 
 Your login token is cached at
 `%APPDATA%\DualSenseQuickMenu\spotify_token.json` so you won't need to log in
 again on future runs unless it expires or you revoke access from your
 Spotify account settings.
 
-Playback control (play/pause/skip/shuffle/repeat/liking songs) requires
-**Spotify Premium** — free accounts can still browse Liked Songs and
-playlists, but attempting to play something shows an inline message
-explaining why instead of failing silently.
+Playback control (play/pause/skip/shuffle/repeat/liking songs) needs
+**Spotify Premium**. Free accounts can still browse Liked Songs and
+playlists, but trying to play something shows an inline message explaining
+why instead of just failing silently.
 
 ## Important: game display mode
 
 Overlays cannot draw on top of *exclusive fullscreen* games. Set your game
 to **Borderless** (usually under Settings → Video → Display Mode). It looks
-identical to fullscreen — this is standard practice for anyone using
+identical to fullscreen anyway, and it's standard practice for anyone using
 overlays.
 
 While the menu is open it takes window focus on purpose, so the game stops
@@ -187,63 +188,65 @@ reacting to the D-pad; closing the menu gives focus straight back.
 ## Troubleshooting
 
 **Start here for anything not listed below.** Right-click the tray icon →
-**Settings…** → **Copy diagnostics**, then paste the result into your message.
-It's a short summary of your setup plus the last few errors, and it deliberately
-contains no passwords, tokens, or account details. **Open log folder** next to
-it gets you the full `log.txt` if more detail is needed. Nothing is uploaded
-anywhere automatically.
+**Settings…** → **Copy diagnostics**, then paste the result into your
+message. It's a short summary of your setup plus the last few errors, and it
+deliberately contains no passwords, tokens, or account details. **Open log
+folder** next to it gets you the full `log.txt` if more detail is needed.
+Nothing is uploaded anywhere automatically.
 
-- **PS button does nothing** — make sure the controller is on USB and that no
-  other tool (DS4Windows, Steam with "PlayStation Controller Support" enabled)
-  is capturing the controller. Ctrl+Alt+P works either way in the meantime.
-- **Ctrl+Alt+P does nothing** — another running app most likely already has
+- **PS button does nothing**: make sure the controller is on USB and that no
+  other tool (DS4Windows, Steam with "PlayStation Controller Support"
+  enabled) is capturing the controller. Ctrl+Alt+P works either way in the
+  meantime.
+- **Ctrl+Alt+P does nothing**: another running app most likely already has
   that combination bound to something else. Settings shows whether it
   actually registered.
-- **Menu doesn't appear over the game** — the game is in exclusive fullscreen;
-  switch it to borderless windowed.
-- **Music panel says "Set up Spotify…"** — no client ID has been saved yet.
-  Right-click the tray icon → **Settings…** and follow the Spotify steps above.
-  (Pressing Cross on that row closes the overlay and opens Settings for you.)
-- **Music panel shows "Log in with Spotify" every time** — the cached token
+- **Menu doesn't appear over the game**: the game is in exclusive fullscreen.
+  Switch it to borderless windowed.
+- **Music panel says "Set up Spotify…"**: no client ID has been saved yet.
+  Right-click the tray icon → **Settings…** and follow the Spotify steps
+  above. (Pressing Cross on that row closes the overlay and opens Settings
+  for you.)
+- **Music panel shows "Log in with Spotify" every time**: the cached token
   may be missing a permission the app needs (this happened once already when
-  playlist access was added); logging in again fixes it.
-- **Login fails with an "invalid redirect URI" error** — the Redirect URI in
+  playlist access was added). Logging in again fixes it.
+- **Login fails with an "invalid redirect URI" error**: the Redirect URI in
   your Spotify app doesn't match `http://127.0.0.1:8888/callback` exactly.
-  Copy it from the Settings window rather than typing it.
-- **"Open Spotify on this PC or phone to enable playback control"** — Spotify
-  needs an *active* device to control; open the Spotify app anywhere (PC,
+  Copy it from the Settings window instead of typing it out.
+- **"Open Spotify on this PC or phone to enable playback control"**: Spotify
+  needs an *active* device to control. Open the Spotify app anywhere (PC,
   phone) and start playback there once, then the overlay can take over.
-- **Now Playing card says "Nothing playing" even though something is** — the
+- **Now Playing card says "Nothing playing" even though something is**: the
   card only ever shows Spotify's own data, not other players. If Spotify
   itself has nothing active (paused too long, no active device, logged out),
-  the card says so; open the full panel (Cross) to also see whatever Windows'
-  own media tracker last saw for other apps.
-- **Now Playing panel shows the wrong app / stale info** — the panel (not the
+  the card just says so. Open the full panel with Cross to also see whatever
+  Windows' own media tracker last saw for other apps.
+- **Now Playing panel shows the wrong app or stale info**: the panel (not the
   home card) falls back to Windows' media tracker when Spotify has nothing
-  playing, so it can show a browser or another player; that's expected, not a
-  bug.
+  playing, so it can show a browser or another player. That's expected, not
+  a bug.
 - **Switch App shows a generic icon for some system apps** (e.g. Windows'
-  own Settings app) — a handful of modern Windows apps don't expose their
+  own Settings app): a handful of modern Windows apps don't expose their
   real per-window icon the normal way, so those fall back to a generic file
   icon instead of a blank row. The window itself still switches correctly.
-- **Switching doesn't bring the game to the front** — the same anti
-  focus-stealing behavior that occasionally needs a couple of tries to open
-  the overlay itself can also affect switching to another app; it retries
-  automatically, so it should resolve within a moment.
+- **Switching doesn't bring the game to the front**: the same
+  anti-focus-stealing behavior that occasionally needs a couple of tries to
+  open the overlay itself can also affect switching to another app. It
+  retries automatically, so it should sort itself out within a moment.
 
 ## Not yet supported (planned)
 
 Chats & Calls (the tray icon exists and says it's under construction),
-Bluetooth, Discord controls, switching
-audio output/input device (vs. just showing the current one — needs an
-undocumented Windows COM interface), the nested Shuffle/Repeat sub-menu from
-the original PS5 UI (this app uses direct one-press toggle/cycle buttons
-instead, which is functionally equivalent).
+Bluetooth, Discord controls, switching audio output/input device (right now
+it just shows the current one; actually switching needs an undocumented
+Windows COM interface), and the nested Shuffle/Repeat sub-menu from the
+original PS5 UI (this app uses direct one-press toggle/cycle buttons instead,
+which does the same job).
 
 ## Licence
 
 Copyright (C) 2026 shihaab453. All rights reserved except as granted in
-[LICENSE](LICENSE) — the PolyForm Strict License 1.0.0 plus additional
+[LICENSE](LICENSE): the PolyForm Strict License 1.0.0 plus additional
 permissions.
 
 **You may:**
@@ -251,8 +254,8 @@ permissions.
 - read, study and learn from this source code
 - download and run the app for your own personal, non-commercial use
 - modify the code for your own personal use
-- submit your changes back here as a contribution — see
-  [CONTRIBUTING.md](CONTRIBUTING.md)
+- submit your changes back here as a contribution (see
+  [CONTRIBUTING.md](CONTRIBUTING.md))
 
 **You may not:**
 
@@ -264,5 +267,5 @@ permissions.
 The software comes with **no warranty of any kind**. See [LICENSE](LICENSE) for
 the terms that actually govern; the summary above is not the licence.
 
-Bundled dependencies keep their own licences — notably PySide6 (Qt for Python),
-which is LGPL v3.
+Bundled dependencies keep their own licences, notably PySide6 (Qt for
+Python), which is LGPL v3.

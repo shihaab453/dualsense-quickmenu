@@ -38,6 +38,15 @@ sp.is_logged_in = lambda: True
 sp.play_track = lambda _uri: None
 sp.get_current_playback = lambda: None
 
+# The panel loads its data through spotify_client.submit, normally a
+# background thread. Running the job inline instead makes delivery synchronous
+# (a Qt signal emitted on the thread that receives it is delivered straight
+# away), so these assertions can read the result on the next line rather than
+# spinning an event loop between every press. The threading itself, and the
+# dropping of stale results, is what tests/verify_workers.py covers.
+# Must be in place before MusicPanel is built: its loaders capture submit.
+sp.submit = lambda job: job()
+
 from PySide6.QtWidgets import QApplication, QLabel
 
 import panels.music as music

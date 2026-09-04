@@ -31,6 +31,8 @@ _VERIFY_SCRIPTS = (
     "verify_appswitcher.py",
     "verify_hotkey.py",
     "verify_music_pagination.py",
+    "verify_music_loading.py",
+    "verify_workers.py",
 )
 
 

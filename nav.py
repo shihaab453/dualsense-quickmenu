@@ -48,9 +48,22 @@ class RowList:
             if self.on_select:
                 self.on_select(0, self.rows[0])
 
+    def _valid_index(self) -> int:
+        """The stored index, clamped to the rows that actually exist now.
+
+        Rows change underneath a list that's already on screen: a background
+        load lands, or a page is appended. Between those two moments a
+        controller press can arrive (fit_scroll_to_content pumps the event
+        loop to measure, so this is not hypothetical), and an index left
+        pointing past the end would take the whole app down on the next
+        press."""
+        self.index = max(0, min(self.index, len(self.rows) - 1))
+        return self.index
+
     def move(self, delta: int) -> None:
         if not self.rows:
             return
+        self._valid_index()
         new_index = self.index + delta
         if self.wrap:
             new_index %= len(self.rows)
@@ -63,6 +76,28 @@ class RowList:
         self.rows[self.index].set_selected(True)
         if self.on_select:
             self.on_select(self.index, self.rows[self.index])
+
+    def replace_rows(self, rows) -> None:
+        """Swap in a different set of rows for a list that is already on
+        screen — a panel whose background load has just finished, replacing
+        its "Loading…" placeholder or refreshing over rows from last time.
+        The selection stays at the same position where that position still
+        exists, so a refresh landing under the user doesn't yank their
+        cursor back to the top.
+
+        The caller owns the old row *widgets* (they normally go out with a
+        clear_layout on the container); this only swaps what the D-pad
+        drives."""
+        index = self.index
+        self.rows = rows
+        if not rows:
+            self.index = 0
+            return
+        self.index = min(index, len(rows) - 1)
+        for i, row in enumerate(rows):
+            row.set_selected(i == self.index)
+        if self.on_select:
+            self.on_select(self.index, rows[self.index])
 
     def reselect(self, index: int) -> None:
         """Point the selection at an absolute row index, assuming whatever was
@@ -82,7 +117,8 @@ class RowList:
 
     def activate(self) -> None:
         if self.rows and self.on_activate:
-            self.on_activate(self.index, self.rows[self.index])
+            index = self._valid_index()
+            self.on_activate(index, self.rows[index])
 
     def adjust(self, delta: int) -> None:
         """Forward a left/right press to the selected row's own `adjust`
@@ -92,7 +128,7 @@ class RowList:
             row.adjust(delta)
 
     def selected_row(self):
-        return self.rows[self.index] if self.rows else None
+        return self.rows[self._valid_index()] if self.rows else None
 
 
 class NavStack:

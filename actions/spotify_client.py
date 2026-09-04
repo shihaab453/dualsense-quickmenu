@@ -10,8 +10,18 @@
 # thread — the same "background thread + callback" shape controller.py
 # already uses for the controller listener — so the Qt overlay never
 # freezes waiting for someone to click "Agree".
+#
+# Every other call here is a blocking network request too, and the UI must
+# not sit on the Qt main thread waiting for one. submit() is how they get off
+# it. It runs jobs on a single background thread rather than one thread per
+# call, and that is a correctness requirement, not tidiness: spotipy holds one
+# shared requests.Session, and a Session is not safe to use from two threads
+# at once. Anything that reaches this module's functions from the UI should go
+# through submit() (workers.Loader wraps it with staleness handling), so the
+# rule stays "one session, one thread".
 
 import os
+import queue
 import threading
 
 import spotipy
@@ -22,6 +32,34 @@ import logs
 import settings
 
 log = logs.get(__name__)
+
+# Deliberately built here rather than imported from workers.py: that module
+# imports Qt, and this one stays Qt-free so the tests can exercise it headless.
+_jobs: "queue.Queue" = queue.Queue()
+
+
+def _run_jobs() -> None:
+    while True:
+        job = _jobs.get()
+        try:
+            job()
+        except Exception:
+            # Callers are expected to handle their own failures, so reaching
+            # here is a plumbing bug. Logged and swallowed, because letting
+            # this thread die would silently strand every later request.
+            log.exception("A Spotify job raised")
+
+
+_worker = threading.Thread(target=_run_jobs, name="spotify-worker", daemon=True)
+_worker.start()
+
+
+def submit(job) -> None:
+    """Run job() on the one thread that owns the Spotify HTTP session. Jobs
+    run in submission order; see the note at the top of this file for why
+    they are not run in parallel."""
+    _jobs.put(job)
+
 
 # The client ID is *not* baked in, deliberately. A Spotify app registered on
 # the developer dashboard starts in "development mode", which only works for
@@ -135,7 +173,13 @@ def login_async(on_done) -> None:
     """Logs in on a background thread (opens the browser if there's no
     cached session) and calls on_done(success, error_message) when it's
     done. on_done fires on the background thread — callers must hop back
-    to the Qt thread themselves (see MusicPanel's _LoginSignal)."""
+    to the Qt thread themselves (see MusicPanel's _LoginSignal).
+
+    A thread of its own rather than submit(): this one blocks until the user
+    finishes clicking around in their browser, which can be a minute or
+    never, and parking the shared worker on that would freeze every other
+    Spotify request behind it. Nothing else is talking to the API while the
+    user is logged out, so the one-session-one-thread rule still holds."""
 
     def worker():
         try:
@@ -266,9 +310,7 @@ def get_now_playing_summary_async(on_done) -> None:
     panel. on_done fires on the background thread; the caller must hop back to
     the Qt thread itself (see MusicPanel's _LoginSignal for the same pattern
     applied to login)."""
-    threading.Thread(
-        target=lambda: on_done(get_now_playing_summary()), daemon=True
-    ).start()
+    submit(lambda: on_done(get_now_playing_summary()))
 
 
 def play_pause() -> None:

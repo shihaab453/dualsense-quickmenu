@@ -196,6 +196,18 @@ def open_in_spotify(panel, item) -> bool:
     return False
 
 
+def message_label(text: str) -> QLabel:
+    """The muted line a panel shows in place of rows — "Loading…", "Nothing
+    else appears to be open right now", a failure. One helper so every
+    panel's in-place-of-content states look the same, and so a list that is
+    still loading has nothing selectable in it (the D-pad should have
+    nowhere to go until there's something real to go to)."""
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setStyleSheet("font-size: 15px; color: rgba(255,255,255,0.5);")
+    return label
+
+
 def clear_layout(layout) -> None:
     """Remove and delete every widget currently in a layout, so it can be
     rebuilt from scratch (e.g. a list that reloads from live data)."""
@@ -203,6 +215,14 @@ def clear_layout(layout) -> None:
         item = layout.takeAt(0)
         widget = item.widget()
         if widget:
+            # Unparented as well as deleted. deleteLater() doesn't destroy the
+            # widget until control is back in the event loop, and until then it
+            # carries on painting exactly where it was — so the rows a rebuild
+            # is replacing show through underneath the new ones. Not
+            # theoretical: rebuilding a list measures itself
+            # (fit_scroll_to_content) and measuring pumps the event loop, so
+            # there is a real repaint inside that window.
+            widget.setParent(None)
             widget.deleteLater()
 
 

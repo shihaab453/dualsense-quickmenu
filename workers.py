@@ -14,6 +14,11 @@
 #           threads at once, so every Spotify call in the app goes through
 #           spotify_client.submit rather than a thread of its own.
 #
+#   Commands runs what the user pressed. Every command runs, in order, and
+#           reports back. Never route a button press through a Loader: its
+#           supersession is designed to discard work, and a press is not
+#           work to discard.
+#
 #   Loader  is the Qt half. It owns one *slot* of work (a panel's library
 #           list, its tracklist, the window list) and guarantees two things
 #           the UI depends on: the callback runs on the Qt main thread, and a
@@ -66,6 +71,56 @@ class Worker:
 # from the Spotify thread on purpose: the two have nothing to do with each
 # other, and opening the switcher shouldn't wait behind a music request.
 SYSTEM = Worker("system")
+
+
+class Commands(QObject):
+    """Runs what the user pressed, in order, dropping nothing.
+
+    The counterpart to Loader, and the distinction matters more than the small
+    amount of code here suggests. A Loader answers "what is in this playlist?"
+    and is right to throw away an answer the user has already navigated past.
+    A command is "play this", "skip to the next track", "like this" — a thing
+    the user asked for, which either happens or visibly fails. Running commands
+    through a Loader means a second press silently eats the first, which is
+    what this app shipped for a day.
+
+    Commands are not cancelled when the overlay closes. Picking a song and
+    closing the menu to get back to the game is the normal way to use this app,
+    so a queued play must still start. Feedback is the part that has to be
+    guarded: the caller decides whether a result is still worth showing, since
+    the user may be looking at something else by the time it lands.
+    """
+
+    _finished = Signal(int, object, object)  # id, value, error
+
+    def __init__(self, submit, name: str = ""):
+        super().__init__()
+        self._submit = submit
+        self._name = name
+        self._next_id = 0
+        self._callbacks: dict[int, object] = {}
+        self._finished.connect(self._deliver)
+
+    def run(self, work, on_done=None) -> None:
+        """Run work() in the background. on_done(value, error), if given, runs
+        on the Qt main thread once it has finished, whatever happened."""
+        self._next_id += 1
+        command_id = self._next_id
+        if on_done is not None:
+            self._callbacks[command_id] = on_done
+
+        def job():
+            try:
+                self._finished.emit(command_id, work(), None)
+            except Exception as e:
+                self._finished.emit(command_id, None, e)
+
+        self._submit(job)
+
+    def _deliver(self, command_id: int, value, error) -> None:
+        on_done = self._callbacks.pop(command_id, None)
+        if on_done is not None:
+            on_done(value, error)
 
 
 class Loader(QObject):

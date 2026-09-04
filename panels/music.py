@@ -37,7 +37,7 @@ from actions import album_art
 from actions import spotify_client as sp
 from icons import render_icon
 from nav import RowList
-from workers import Loader
+from workers import Commands, Loader
 from panels.base import (
     ActionRow,
     Panel,
@@ -299,12 +299,18 @@ class MusicPanel(Panel):
         self._library_loader = Loader(sp.submit, "music/library")
         self._songs_loader = Loader(sp.submit, "music/songs")
         self._detail_loader = Loader(sp.submit, "music/detail")
-        self._action_loader = Loader(sp.submit, "music/action")
+        # Presses, not queries. A Loader would drop the first of two quick
+        # presses; see the class comment in workers.py.
+        self._commands = Commands(sp.submit, "music/commands")
         # The RowLists currently on the nav stack, kept so a load that
         # finishes later can fill in the rows they were pushed empty with.
         self._library_nav = None
         self._songs_nav = None
-        self._loading_more = False
+        # One flag shared by two independent lists, reset only on success, was
+        # how paging latched off permanently. Two flags, cleared whenever
+        # their slot restarts.
+        self._library_paging = False
+        self._songs_paging = False
         # Which of the three root views build_nav() settled on. on_enter fires
         # again every time Circle pops back to this level, and by then the
         # answer may have changed (a background login check can turn a
@@ -558,6 +564,11 @@ class MusicPanel(Panel):
         """Fetch the first page of the library in the background. Whatever is
         already on screen (last time's playlists, or nothing at all) stays put
         until the answer arrives."""
+        # This supersedes any page request already queued on the same loader,
+        # so that request's callback will never run. Clearing the flag here
+        # rather than only in that callback is what stops paging latching on
+        # permanently: see the note on _songs_paging.
+        self._library_paging = False
 
         def work():
             # Doubles as the login check: validating the cached token can
@@ -610,6 +621,37 @@ class MusicPanel(Panel):
             self._library_nav.replace_rows([self._login_row])
         self._show_root_view()
 
+    @staticmethod
+    def _row_identity(row):
+        """What a row *is*, as opposed to where it currently sits. A refresh
+        can add, remove or reorder rows, so restoring by position lands the
+        user somewhere arbitrary; restoring by identity lands them back on the
+        thing they were looking at."""
+        if isinstance(row, _LibraryRow):
+            return ("playlist", row.playlist_id)
+        if isinstance(row, _TrackRow):
+            return ("track", row.track.get("id"))
+        if isinstance(row, _LoadMoreRow):
+            return ("load-more", None)
+        return None
+
+    def _index_of(self, rows, identity) -> int:
+        if identity is None:
+            return 0
+        for i, row in enumerate(rows):
+            if self._row_identity(row) == identity:
+                return i
+        # It's gone - the playlist was deleted, or the song dropped out of the
+        # list. Falling back to the top is the honest answer; silently landing
+        # on whatever moved into that position is not.
+        return 0
+
+    def _selected_identity(self, nav):
+        if nav is None:
+            return None
+        row = nav.selected_row()
+        return None if row is None else self._row_identity(row)
+
     def _render_library_rows(self) -> None:
         """Rebuild the library list from whatever is currently known, and hand
         the new rows to the level already on screen.
@@ -619,6 +661,7 @@ class MusicPanel(Panel):
         (see fit_scroll_to_content), which can deliver a controller press
         mid-rebuild. Handing that press a list of already-deleted rows is a
         crash; handing it an empty one costs at most a swallowed button."""
+        keep = self._selected_identity(self._library_nav)
         if self._library_nav is not None:
             self._library_nav.replace_rows([])
         clear_layout(self._library_rows_container)
@@ -645,7 +688,9 @@ class MusicPanel(Panel):
         self._library_rows_container.addWidget(liked_row)
         self._add_library_rows(0)
         if self._library_nav is not None:
-            self._library_nav.replace_rows(self._library_rows)
+            self._library_nav.replace_rows(
+                self._library_rows, self._index_of(self._library_rows, keep)
+            )
         self._resettle(self._library_view)
 
     def _add_library_rows(self, rendered: int) -> None:
@@ -673,9 +718,9 @@ class MusicPanel(Panel):
         fit_scroll_to_content(self._library_scroll)
 
     def _page_in_more_playlists(self) -> None:
-        if self._loading_more:
+        if self._library_paging:
             return  # already fetching; a second press shouldn't queue another
-        self._loading_more = True
+        self._library_paging = True
         self._set_load_more_state(self._library_rows, "playlists")
         offset = len(self._library_playlists)
 
@@ -687,7 +732,7 @@ class MusicPanel(Panel):
         )
 
     def _on_playlists_page(self, offset: int, value, error) -> None:
-        self._loading_more = False
+        self._library_paging = False
         if offset != len(self._library_playlists):
             # The library was reloaded from scratch underneath this page (a
             # reopen, or a login landing). Appending now would duplicate or
@@ -740,6 +785,13 @@ class MusicPanel(Panel):
         self._on_song_activated(index, row)
 
     def _start_songs_load(self, playlist_id) -> None:
+        # Opening a playlist supersedes any page request still queued for the
+        # previous one, which means _on_songs_page will never run for it. The
+        # flag has to be cleared here as well as there, or leaving a playlist
+        # mid-page leaves this panel unable to page anything for the rest of
+        # the session - which is exactly what happened.
+        self._songs_paging = False
+
         def work():
             return _fetch_songs_page(playlist_id, 0)
 
@@ -769,6 +821,7 @@ class MusicPanel(Panel):
 
     def _render_song_rows(self) -> None:
         # See _render_library_rows for why the nav level is emptied first.
+        keep = self._selected_identity(self._songs_nav)
         if self._songs_nav is not None:
             self._songs_nav.replace_rows([])
         clear_layout(self._songs_rows_container)
@@ -786,7 +839,9 @@ class MusicPanel(Panel):
             return
         self._add_song_rows(0)
         if self._songs_nav is not None:
-            self._songs_nav.replace_rows(self._song_rows)
+            self._songs_nav.replace_rows(
+                self._song_rows, self._index_of(self._song_rows, keep)
+            )
         self._resettle(self._songs_view)
 
     def _add_song_rows(self, rendered: int) -> None:
@@ -808,9 +863,9 @@ class MusicPanel(Panel):
         fit_scroll_to_content(self._songs_scroll)
 
     def _page_in_more_songs(self) -> None:
-        if self._loading_more:
+        if self._songs_paging:
             return
-        self._loading_more = True
+        self._songs_paging = True
         self._set_load_more_state(self._song_rows, "songs")
         offset = len(self._song_tracks)
         playlist_id = self._current_playlist_id
@@ -823,7 +878,7 @@ class MusicPanel(Panel):
         )
 
     def _on_songs_page(self, offset: int, value, error) -> None:
-        self._loading_more = False
+        self._songs_paging = False
         if offset != len(self._song_tracks):
             # See _on_playlists_page: the list was rebuilt under this page.
             return
@@ -895,12 +950,19 @@ class MusicPanel(Panel):
 
         if not uri:
             return
-        self._action_loader.start(
+        track_id = track.get("id")
+        self._commands.run(
             lambda: sp.play_track(uri),
-            lambda value, error: self._on_playback_started(uri, error),
+            lambda value, error: self._on_playback_started(uri, track_id, error),
         )
 
-    def _on_playback_started(self, uri: str, error) -> None:
+    def _on_playback_started(self, uri: str, track_id, error) -> None:
+        # The command itself always runs, even if the user closed the overlay
+        # on the way out - picking a song and going back to the game is the
+        # normal way to use this. Only the *feedback* is conditional, because
+        # by now they may be looking at a different song.
+        if track_id != self._current_track_id:
+            return
         if error is None:
             self._detail_status.setText("")
             self._refresh_tile_states()
@@ -971,11 +1033,14 @@ class MusicPanel(Panel):
         if work is None:
             return
         self._detail_status.setText("")
-        self._action_loader.start(
-            work, lambda value, error: self._on_tile_action_done(name, error)
+        track_id = self._current_track_id
+        self._commands.run(
+            work, lambda value, error: self._on_tile_action_done(name, track_id, error)
         )
 
-    def _on_tile_action_done(self, name: str, error) -> None:
+    def _on_tile_action_done(self, name: str, track_id, error) -> None:
+        if track_id != self._current_track_id:
+            return  # see _on_playback_started: the press ran, the report is stale
         if error is None:
             self._detail_status.setText("")
             self._refresh_tile_states()

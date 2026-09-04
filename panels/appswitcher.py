@@ -100,7 +100,10 @@ class AppSwitcherPanel(Panel):
         # Emptied before the rebuild for the same reason the Music panel does
         # it: measuring pumps the event loop, so a press can arrive against
         # rows that are on their way out. See HANDOFF gotcha #16.
+        keep = None
         if self._nav is not None:
+            row = self._nav.selected_row()
+            keep = None if row is None else row.window.get("hwnd")
             self._nav.replace_rows([])
         clear_layout(self._rows_container)
         self._rows = []
@@ -119,7 +122,13 @@ class AppSwitcherPanel(Panel):
 
         fit_scroll_to_content(self._scroll)
         if self._nav is not None:
-            self._nav.replace_rows(self._rows)
+            # Restore by window handle: a refresh reorders the list by
+            # z-order, so the previous row *number* is a different window.
+            index = next(
+                (i for i, r in enumerate(self._rows) if r.window.get("hwnd") == keep),
+                0,
+            )
+            self._nav.replace_rows(self._rows, index)
         self.request_relayout()
 
     def _on_activate(self, index, row) -> None:

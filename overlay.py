@@ -553,10 +553,11 @@ class OverlayWindow(QWidget):
 
     def _update_cards_hint(self, index, card) -> None:
         if card is self._now_playing_card:
-            # Text only, matching the PS5 reference — Square isn't mapped to
-            # anything in controller.py yet, so this doesn't do anything if
-            # pressed. Cross still opens the full Now Playing panel.
-            self._cards_hint_label.setText("Press □ for Pause")
+            # The PS5 reference shows "Press □ for Pause" here, but Square is
+            # not mapped in controller.py, so that hint advertised an action
+            # that did nothing - the first thing a new tester would try. Say
+            # what actually works until Square is wired up.
+            self._cards_hint_label.setText("Press Cross to open")
         elif card is self._app_switcher_card:
             self._cards_hint_label.setText("Press Cross to switch")
         self._relayout()

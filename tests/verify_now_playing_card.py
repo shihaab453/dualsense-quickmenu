@@ -163,7 +163,13 @@ check("artist text is populated", "Artist One" in card._artist_label.text())
 check("source text is populated", card._source_label.text() == "From Test Album")
 check("the card grows once selected", card.height() > collapsed_height,
       f"(collapsed={collapsed_height}, selected={card.height()})")
-check("the hint label shows the pause hint", "Pause" in win._cards_hint_label.text())
+# It used to say "Press □ for Pause", which this check pinned in place even
+# though Square is not mapped in controller.py - the hint advertised an action
+# that did nothing. A test asserting a promise the app cannot keep is worse
+# than no test, so this now asserts the honest one.
+check("the hint offers an action that actually works",
+      win._cards_hint_label.text() == "Press Cross to open",
+      f"(got {win._cards_hint_label.text()!r})")
 check("the hint label is visible", win._cards_hint_label.isVisible())
 check("the tray label is hidden while cards are focused",
       not win._tray_label.isVisible())

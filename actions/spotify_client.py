@@ -315,7 +315,17 @@ def get_now_playing_summary_async(on_done) -> None:
         # The logged-in check belongs on this side of the thread hop too:
         # validating a cached token can refresh it over the network, and the
         # caller here is the menu-open path, where nothing may block.
-        on_done(get_now_playing_summary() if is_logged_in() else None)
+        #
+        # on_done must run whatever happens. It used to be able to raise out
+        # of is_logged_in(), the worker swallowed the exception, and the
+        # caller's "a refresh is in flight" flag stayed set for the life of
+        # the process - so the home card silently never updated again.
+        try:
+            summary = get_now_playing_summary() if is_logged_in() else None
+        except Exception:
+            log.exception("Couldn't work out what's playing")
+            summary = None
+        on_done(summary)
 
     submit(job)
 

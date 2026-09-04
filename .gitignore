@@ -16,6 +16,10 @@ desktop.ini
 .pytest_cache/
 CLAUDE.md
 HANDOFF.md
+# External review notes, same status as HANDOFF.md: local working
+# documents, not part of the public repo.
+REVIEW-*.md
+review_probes_*.py
 
 # Spotify's official brand kit was supplied as a full download (print
 # formats, every color/CMYK/PMS variant) — only the one SVG icons.py actually

@@ -25,7 +25,7 @@ from _harness import check, finish
 
 from PySide6.QtCore import QCoreApplication, QEventLoop
 
-from workers import Loader, Worker
+from workers import Commands, Loader, Worker
 
 app = QCoreApplication(sys.argv)
 MAIN_THREAD = threading.get_ident()
@@ -115,5 +115,45 @@ for n in range(3):
 gate.set()
 check("only the newest queued job actually ran",
       pump(lambda: ran == [2], timeout=3.0), f"(got {ran})")
+
+print("\n[Commands: every one runs, in order]")
+# The distinction this class exists for. A Loader drops work the user has
+# navigated past, which is right for "fetch the library" and catastrophic for
+# "press Next": the second press would silently eat the first.
+ran = []
+gate = threading.Event()
+commands = Commands(worker.submit, "test")
+commands.run(lambda: (gate.wait(3), ran.append("first"))[1])
+commands.run(lambda: ran.append("second"))
+commands.run(lambda: ran.append("third"))
+gate.set()
+check("no command is dropped for a later one",
+      pump(lambda: len(ran) == 3), f"(got {ran})")
+check("and they run in the order they were pressed",
+      ran == ["first", "second", "third"], f"(got {ran})")
+
+print("\n[Commands: each one reports back]")
+results = []
+commands.run(lambda: "done", lambda value, error: results.append((value, error)))
+check("a result is delivered", pump(lambda: results), f"(got {results})")
+if results:
+    check("carrying the return value", results[0][0] == "done",
+          f"(got {results[0][0]!r})")
+    check("with no error", results[0][1] is None, f"(got {results[0][1]!r})")
+
+results = []
+commands.run(lambda: (_ for _ in ()).throw(ValueError("boom: command")),
+             lambda value, error: results.append((value, error)))
+check("a failing command still reports", pump(lambda: results), f"(got {results})")
+if results:
+    check("handing over the exception", isinstance(results[0][1], ValueError),
+          f"(got {results[0][1]!r})")
+
+print("\n[Commands: a failure doesn't stop the queue]")
+after = []
+commands.run(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+commands.run(lambda: after.append("still going"))
+check("the next command still ran", pump(lambda: after == ["still going"]),
+      f"(got {after})")
 
 finish()

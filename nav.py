@@ -77,7 +77,7 @@ class RowList:
         if self.on_select:
             self.on_select(self.index, self.rows[self.index])
 
-    def replace_rows(self, rows) -> None:
+    def replace_rows(self, rows, index: int | None = None) -> None:
         """Swap in a different set of rows for a list that is already on
         screen — a panel whose background load has just finished, replacing
         its "Loading…" placeholder or refreshing over rows from last time.
@@ -85,10 +85,17 @@ class RowList:
         exists, so a refresh landing under the user doesn't yank their
         cursor back to the top.
 
+        Pass `index` to say where the selection should land, for a caller
+        that knows which *item* was selected rather than which position. A
+        panel that empties the list before rebuilding it (see gotcha #16) has
+        already lost its position by the time the new rows exist, so position
+        alone is not enough to put the user back where they were.
+
         The caller owns the old row *widgets* (they normally go out with a
         clear_layout on the container); this only swaps what the D-pad
         drives."""
-        index = self.index
+        if index is None:
+            index = self.index
         self.rows = rows
         if not rows:
             self.index = 0

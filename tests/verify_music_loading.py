@@ -306,4 +306,119 @@ check("and the panel switched to the logged-out view",
       panel._view_stack.currentWidget() is panel._logged_out_view)
 state["logged_in"] = True
 
+print("\n[regressions found by the 2026-09-04 external review]")
+# Every one of these shipped through a green run of this very suite. They are
+# grouped here so the shape stays obvious: each is about work that was queued
+# and then *not* completed in the way the panel assumed. See
+# REVIEW-2026-09-04.md and its probe script.
+
+# -- a press is not a query: it must not be dropped for a later press --
+presses = []
+sp.next_track = lambda: presses.append("next")
+submit.defer = True
+open_panel()
+submit.run_all()
+panel._current_track_id = "t1"
+panel._pending_track = {"id": "t1", "name": "T", "uri": "spotify:track:t1",
+                        "artists": [], "album": {"images": []}}
+submit.defer = True
+panel._on_tile_activated(0, panel._next_tile)
+panel._on_tile_activated(0, panel._next_tile)
+submit.run_all()
+check("two quick Next presses both run", presses == ["next", "next"],
+      f"(got {presses})")
+
+# -- leaving a playlist mid-page must not disable paging for good --
+# Two playlists this file has not opened before. The panel caches the last
+# tracklist it loaded, so reusing an earlier one would start already complete:
+# there would be no "Load more" row to press, and this would quietly test
+# nothing while passing. That is the same shape of mistake that let the bug
+# ship, so it is worth stating.
+# Long enough to need a second page at the real page size. Shrinking
+# _PAGE_SIZE instead would page the *library* too, and the presses below would
+# land on the library's own "Load more" row rather than on a playlist.
+TRACKS["pl-c"] = [track(n) for n in range(music._PAGE_SIZE + 5)]
+TRACKS["pl-d"] = [track(n) for n in range(music._PAGE_SIZE + 5)]
+state["playlists"] = PLAYLISTS + [
+    {"id": "pl-c", "name": "Playlist C", "tracks": {"total": len(TRACKS["pl-c"])}},
+    {"id": "pl-d", "name": "Playlist D", "tracks": {"total": len(TRACKS["pl-d"])}},
+]
+submit.defer = False
+open_panel()
+nav = panel.nav.current()
+nav.move(3)                                    # Playlist C
+nav.activate()
+paging_row = panel.nav.current().rows[-1]
+check("sanity: we are in a tracklist that offers another page",
+      isinstance(paging_row, music._LoadMoreRow)
+      and panel._songs_header.text() == "Playlist C",
+      f"(showing {panel._songs_header.text()!r}, last row {paging_row})")
+
+submit.defer = True
+songs = panel.nav.current()
+songs.move(len(songs.rows) - 1)
+songs.activate()                               # ask for C's next page
+check("sanity: that request is in flight", panel._songs_paging)
+panel.nav.pop()                                # leave before it lands
+panel.nav.current().on_enter()
+panel.nav.current().move(1)                    # Playlist D
+panel.nav.current().activate()
+submit.run_all()                               # C's page is superseded, never delivered
+check("abandoning a page request doesn't latch paging off",
+      not panel._songs_paging and not panel._library_paging,
+      f"(songs={panel._songs_paging}, library={panel._library_paging})")
+
+# The latch didn't make paging slow, it made the panel refuse to ask at all.
+submit.jobs.clear()
+nav_d = panel.nav.current()
+nav_d.move(len(nav_d.rows) - 1)
+nav_d.activate()
+check("and the next playlist can still ask for a page",
+      len(submit.jobs) == 1, f"(scheduled {len(submit.jobs)} request(s))")
+submit.run_all()
+state["playlists"] = PLAYLISTS
+submit.defer = False
+
+# -- a refresh keeps the user on the same item, not the same row number --
+# The panel stays open throughout: cached rows are on screen, the user moves,
+# and the refresh lands underneath them. Reopening a closed panel starting at
+# the top is correct, so that is deliberately not what is tested here.
+submit.defer = False
+open_panel()
+submit.defer = True
+open_panel()                                   # cached rows, refresh pending
+nav = panel.nav.current()
+nav.move(1)
+was = nav.selected_row().playlist_name
+state["playlists"] = [{"id": "pl-new", "name": "Brand New", "tracks": {"total": 1}}] + PLAYLISTS
+submit.run_all()                               # the refresh reorders the list
+still = panel.nav.current().selected_row()
+check("a refresh that reorders the list keeps the same playlist selected",
+      getattr(still, "playlist_name", None) == was,
+      f"(was on {was!r}, now on {getattr(still, 'playlist_name', None)!r})")
+state["playlists"] = PLAYLISTS
+submit.defer = False
+
+# -- a failing lookup must still complete, or the caller waits forever --
+import overlay as overlay_module
+
+state["logged_in"] = True
+card = overlay_module._NowPlayingCard()
+sp.is_logged_in = lambda: (_ for _ in ()).throw(RuntimeError("token check blew up"))
+submit.defer = True
+card.refresh()
+try:
+    submit.run_all()
+except Exception:
+    pass                                        # the real worker swallows it
+check("a lookup that raises still clears the in-flight flag",
+      not card._refreshing, f"(got {card._refreshing})")
+sp.is_logged_in = lambda: state["logged_in"]
+submit.jobs.clear()
+card.refresh()
+check("so the card can refresh again afterwards", len(submit.jobs) == 1,
+      f"(scheduled {len(submit.jobs)} job(s))")
+submit.jobs.clear()
+submit.defer = False
+
 finish()

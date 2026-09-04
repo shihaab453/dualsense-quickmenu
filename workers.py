@@ -62,6 +62,12 @@ class Worker:
                 log.exception("A %s job raised", self._name)
 
 
+# Windows-side lookups (currently the App Switcher's window list). Separate
+# from the Spotify thread on purpose: the two have nothing to do with each
+# other, and opening the switcher shouldn't wait behind a music request.
+SYSTEM = Worker("system")
+
+
 class Loader(QObject):
     """One slot of background work for a panel.
 

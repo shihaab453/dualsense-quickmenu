@@ -220,10 +220,14 @@ def _get_window_icon_handle(hwnd: int):
     return None
 
 
-def _hicon_to_qpixmap(hicon, size: int) -> QPixmap | None:
-    """Converts a live HICON into a QPixmap, or None on failure. Never raises
+def _hicon_to_qimage(hicon, size: int) -> QImage | None:
+    """Converts a live HICON into a QImage, or None on failure. Never raises
     — a bad icon shouldn't take the whole window list down, it should just
-    leave that one row without an icon."""
+    leave that one row without an icon.
+
+    QImage rather than QPixmap on purpose: enumeration runs on a worker
+    thread, and QPixmap is a GUI-thread type. The conversion to a pixmap
+    happens in the panel, on the thread allowed to do it."""
     icon_info = ICONINFO()
     if not user32.GetIconInfo(hicon, ctypes.byref(icon_info)):
         return None
@@ -262,10 +266,9 @@ def _hicon_to_qpixmap(hicon, size: int) -> QPixmap | None:
         # little-endian machine — confirmed against real extracted icons
         # rather than assumed; see verify_window_switcher.py.
         image = QImage(bytes(buffer), width, height, QImage.Format_ARGB32).copy()
-        pixmap = QPixmap.fromImage(image)
         if size != width or size != height:
-            pixmap = pixmap.scaled(size, size)
-        return pixmap
+            image = image.scaled(size, size)
+        return image
     finally:
         gdi32.DeleteObject(icon_info.hbmColor)
         gdi32.DeleteObject(icon_info.hbmMask)
@@ -290,10 +293,12 @@ def _get_exe_icon_handle(exe_path: str):
     return info.hIcon
 
 
-def get_window_icon(hwnd: int, size: int = 32, exe_path: str = "") -> QPixmap | None:
-    """The window's own icon as a size x size QPixmap, or None if extraction
+def get_window_icon_image(hwnd: int, size: int = 32, exe_path: str = "") -> QImage | None:
+    """The window's own icon as a size x size QImage, or None if extraction
     failed every way it was tried — callers should fall back to a placeholder,
-    the same way album art does when a track has none."""
+    the same way album art does when a track has none.
+
+    Safe to call from a worker thread; see _hicon_to_qimage."""
     hicon = _get_window_icon_handle(hwnd)
     source = "window"
     if not hicon and exe_path:
@@ -302,7 +307,7 @@ def get_window_icon(hwnd: int, size: int = 32, exe_path: str = "") -> QPixmap | 
     if not hicon:
         return None
     try:
-        return _hicon_to_qpixmap(hicon, size)
+        return _hicon_to_qimage(hicon, size)
     except Exception:
         log.exception("Icon extraction (%s) failed for window %s", source, hwnd)
         return None
@@ -311,6 +316,13 @@ def get_window_icon(hwnd: int, size: int = 32, exe_path: str = "") -> QPixmap | 
             # GetClassLongPtrW/WM_GETICON return a handle owned by the window;
             # SHGetFileInfo hands back one we're responsible for destroying.
             user32.DestroyIcon(hicon)
+
+
+def get_window_icon(hwnd: int, size: int = 32, exe_path: str = "") -> QPixmap | None:
+    """The same icon as a QPixmap. Qt main thread only — everything that runs
+    on a worker should use get_window_icon_image and convert once it's back."""
+    image = get_window_icon_image(hwnd, size, exe_path)
+    return None if image is None else QPixmap.fromImage(image)
 
 
 # ---- enumeration ----
@@ -347,7 +359,10 @@ def list_switchable_windows(icon_size: int = 32) -> list[dict]:
     """Every top-level window a user could plausibly want to switch to, this
     app's own windows excluded, in Windows' own z-order (roughly most-
     recently-used-first — real Alt-Tab's ordering, not separately tracked
-    here). Each entry: {"hwnd", "title", "pid", "process_name", "icon"}.
+    here). Each entry: {"hwnd", "title", "pid", "process_name", "icon_image"}.
+
+    Safe to call from a worker thread, which is how the panel calls it: the
+    icon comes back as a QImage, and only the panel turns it into a pixmap.
 
     A simple heuristic, not a from-scratch reimplementation of Alt-Tab's own
     (fairly intricate) filtering — see HANDOFF's note on this before trying to
@@ -383,7 +398,7 @@ def list_switchable_windows(icon_size: int = 32) -> list[dict]:
                 "title": title,
                 "pid": pid.value,
                 "process_name": process_name,
-                "icon": get_window_icon(hwnd, icon_size, exe_path),
+                "icon_image": get_window_icon_image(hwnd, icon_size, exe_path),
             })
         except Exception:
             log.exception("Skipping a window during enumeration")

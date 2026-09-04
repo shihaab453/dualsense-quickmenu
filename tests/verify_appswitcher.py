@@ -77,6 +77,9 @@ painter.end()
 own_widget.setWindowIcon(QIcon(known_icon))
 app.processEvents()
 
+# Goes through the QImage path and converts — enumeration runs on a worker
+# thread now, where a QPixmap must not be created, so the pixmap conversion is
+# split out into this main-thread-only wrapper.
 extracted = window_switcher.get_window_icon(own_hwnd, size=32)
 check("a window with an icon set returns a real, non-null pixmap",
       extracted is not None and not extracted.isNull())
@@ -142,7 +145,7 @@ try:
               found["pid"] in related_pids,
               f"(got {found['pid']}, related to launched: {related_pids})")
         check("its icon extracted to something non-null (or a documented None)",
-              found["icon"] is None or not found["icon"].isNull())
+              found["icon_image"] is None or not found["icon_image"].isNull())
 
         # Force focus elsewhere first so switch_to() has an actual transition
         # to make, not a coincidental no-op — a freshly-launched process can
@@ -169,15 +172,35 @@ finally:
 # --------------------------------------------------------------------- panel
 print("\n[AppSwitcherPanel]")
 import panels.appswitcher as appswitcher_module
+from PySide6.QtGui import QImage
+from workers import Loader
 
 FAKE_WINDOWS = [
-    {"hwnd": 111, "title": "Fake Window One", "pid": 1, "process_name": "one.exe", "icon": None},
-    {"hwnd": 222, "title": "Fake Window Two", "pid": 2, "process_name": "two.exe", "icon": None},
+    {"hwnd": 111, "title": "Fake Window One", "pid": 1, "process_name": "one.exe",
+     "icon_image": None},
+    {"hwnd": 222, "title": "Fake Window Two", "pid": 2, "process_name": "two.exe",
+     "icon_image": None},
 ]
 appswitcher_module.window_switcher.list_switchable_windows = lambda: list(FAKE_WINDOWS)
 
 panel = appswitcher_module.AppSwitcherPanel()
+# The window list is built on a worker thread now. Running the job inline
+# keeps these assertions on the next line rather than spinning an event loop;
+# the threading itself is covered by tests/verify_workers.py.
+held_jobs = []
+panel._loader = Loader(lambda job: held_jobs.append(job), "test")
+
+
+def run_jobs():
+    jobs, held_jobs[:] = list(held_jobs), []
+    for job in jobs:
+        job()
+
+
 row_list = panel.build_nav()
+check("the panel opens before the window list is built",
+      row_list.rows == [] and panel._rows == [], f"(got {panel._rows})")
+run_jobs()
 check("build_nav() creates one row per window", len(panel._rows) == 2)
 check("row titles match", [r.window["title"] for r in panel._rows] == ["Fake Window One", "Fake Window Two"])
 check("a window with no icon gets a placeholder, not a crash (no pixmap set)",
@@ -201,8 +224,19 @@ check("activating a row calls switch_to with that window's hwnd",
 
 appswitcher_module.window_switcher.list_switchable_windows = lambda: []
 panel.build_nav()
+run_jobs()
 check("an empty window list shows a hint instead of an empty panel",
       len(panel._rows) == 0)
+
+# The list has to be built off the Qt thread without touching a QPixmap:
+# QPixmap is GUI-thread-only, so enumeration hands back QImages and the row
+# converts. Anything that reintroduces a pixmap in the worker would be a
+# latent crash rather than a visible one, which is why this is pinned here.
+sample = window_switcher.list_switchable_windows()
+check("enumeration returns QImages, not QPixmaps",
+      all(w["icon_image"] is None or isinstance(w["icon_image"], QImage)
+          for w in sample),
+      f"(got {[type(w['icon_image']).__name__ for w in sample]})")
 
 # --------------------------------------------------------- the home card
 print("\n[the home card, embedded in a real OverlayWindow]")

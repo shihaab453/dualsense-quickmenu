@@ -17,6 +17,7 @@ from actions import now_playing
 from actions import spotify_client as sp
 from nav import RowList
 from panels.base import ActionRow, Panel, open_in_spotify
+from workers import Loader
 
 log = logs.get(__name__)
 
@@ -78,6 +79,14 @@ class NowPlayingPanel(Panel):
 
         self._current_art_id = None
         self._current_track = None
+        # What the last look found, so reopening the panel shows it at once
+        # instead of blanking while the same two lookups run again.
+        self._last_result = None
+        # Both lookups are slow enough to matter and neither belongs on the
+        # Qt thread: Spotify is a network round trip, and the Windows media
+        # session is a WinRT call that has to spin up its own event loop.
+        self._loader = Loader(sp.submit, "nowplaying")
+        self._nav = None
         self._reset_art_placeholder()
 
         # Built once and shown/hidden per build_nav, rather than created and
@@ -114,40 +123,65 @@ class NowPlayingPanel(Panel):
         self._art_label.setStyleSheet("")
         self._art_label.setPixmap(pixmap)
 
-    def _spotify_track(self):
+    @staticmethod
+    def _look_up_whats_playing():
+        """Spotify's own state if there is any, else the Windows-wide media
+        session. Runs on a worker thread, so it must not touch a widget.
+
+        Returns (spotify_track_or_None, fallback_info_or_None)."""
+        track = None
         try:
-            if not sp.is_logged_in():
-                return None
-            playback = sp.get_current_playback()
+            if sp.is_logged_in():
+                playback = sp.get_current_playback()
+                if playback and playback.get("item"):
+                    track = playback["item"]
         except Exception:
             # Falls back to the Windows-wide media session, so this is a
             # degraded-but-working path rather than a failure the user sees.
             log.exception("Spotify playback lookup failed; falling back to Windows")
-            return None
-        if not playback or not playback.get("item"):
-            return None
-        return playback["item"]
+        if track is not None:
+            return track, None
+        return None, now_playing.get()
 
     def build_nav(self):
-        track = self._spotify_track()
+        # One RowList, filled in when the lookup lands. The open-in-Spotify
+        # row is the only thing that can ever be in it, and whether it belongs
+        # there depends on the answer, so it starts empty either way.
+        self._nav = RowList(
+            [],
+            on_activate=lambda i, r: self._open_in_spotify(),
+            orientation="horizontal",
+        )
+        # Last time's answer stays on screen while the new one is fetched;
+        # only a genuinely first open shows the placeholder.
+        if self._last_result is None:
+            self._render("Loading…", None)
+        else:
+            self._render(*self._last_result)
+        self._loader.start(self._look_up_whats_playing, self._on_looked_up)
+        return self._nav
+
+    def _on_looked_up(self, value, error) -> None:
+        if error is not None:
+            log.exception("Couldn't work out what's playing", exc_info=error)
+            self._render("Nothing playing", None)
+            return
+        track, info = value
         if track is not None:
             text = track.get("name") or "(unknown title)"
             artists = ", ".join(a["name"] for a in track.get("artists", []))
             if artists:
                 text += f"\n{artists}"
-            art_url = album_art.smallest_image_url(track)
-            track_id = track.get("id")
+        elif info and (info["title"] or info["artist"]):
+            text = info["title"] or "(unknown title)"
+            if info["artist"]:
+                text += f"\n{info['artist']}"
         else:
-            info = now_playing.get()
-            if info and (info["title"] or info["artist"]):
-                text = info["title"] or "(unknown title)"
-                if info["artist"]:
-                    text += f"\n{info['artist']}"
-            else:
-                text = "Nothing playing"
-            art_url = None
-            track_id = None
+            text = "Nothing playing"
+        self._last_result = (text, track)
+        self._render(text, track)
 
+    def _render(self, text: str, track) -> None:
         # The heading names Spotify only when the track actually came from
         # Spotify. This panel falls back to the Windows media session, which
         # reports whatever is playing anywhere — a browser, VLC, a competing
@@ -159,8 +193,10 @@ class NowPlayingPanel(Panel):
         )
 
         self._song_label.setText(text)
+        track_id = track.get("id") if track is not None else None
         self._current_art_id = track_id
         self._reset_art_placeholder()
+        art_url = album_art.smallest_image_url(track) if track is not None else None
         if art_url:
             album_art.get(
                 art_url, _ART_SIZE, album_art.CORNER_RADIUS,
@@ -172,13 +208,15 @@ class NowPlayingPanel(Panel):
         # screen, and not when the fallback is showing another player's track.
         if track is None:
             self._open_row.hide()
-            return RowList([])
-        self._open_row.show()
-        return RowList(
-            [self._open_row],
-            on_activate=lambda i, r: self._open_in_spotify(),
-            orientation="horizontal",
-        )
+            if self._nav is not None:
+                self._nav.replace_rows([])
+        else:
+            self._open_row.show()
+            if self._nav is not None:
+                self._nav.replace_rows([self._open_row])
+        # The panel's height changes with the song label's wrapping, and the
+        # overlay sizes it from outside on the press that opened it.
+        self.request_relayout()
 
     def _open_in_spotify(self) -> None:
         open_in_spotify(self, self._current_track or {})

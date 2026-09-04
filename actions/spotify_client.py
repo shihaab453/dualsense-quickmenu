@@ -310,7 +310,14 @@ def get_now_playing_summary_async(on_done) -> None:
     panel. on_done fires on the background thread; the caller must hop back to
     the Qt thread itself (see MusicPanel's _LoginSignal for the same pattern
     applied to login)."""
-    submit(lambda: on_done(get_now_playing_summary()))
+
+    def job():
+        # The logged-in check belongs on this side of the thread hop too:
+        # validating a cached token can refresh it over the network, and the
+        # caller here is the menu-open path, where nothing may block.
+        on_done(get_now_playing_summary() if is_logged_in() else None)
+
+    submit(job)
 
 
 def play_pause() -> None:

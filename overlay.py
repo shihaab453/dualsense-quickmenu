@@ -289,11 +289,10 @@ class _NowPlayingCard(QFrame):
         updates itself once it arrives. Never blocks — see
         spotify_client.get_now_playing_summary_async for why that matters
         here specifically (this runs on every menu-open, not just when a
-        panel is deliberately opened)."""
+        panel is deliberately opened). That includes the logged-in check,
+        which used to happen here and could itself go to the network to
+        refresh an expired token."""
         if self._refreshing:
-            return
-        if not sp.is_logged_in():
-            self._show_empty_state()
             return
         self._refreshing = True
         sp.get_now_playing_summary_async(self._signal.ready.emit)

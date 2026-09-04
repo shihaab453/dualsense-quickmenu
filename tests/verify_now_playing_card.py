@@ -23,6 +23,7 @@ settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_nowplaying_")
 
 import actions.spotify_client as sp
 from actions import album_art
+from workers import Loader
 
 # This test supplies fake playback data. Keep the corresponding album-art
 # requests local too, leaving the panel's placeholder in place.
@@ -87,6 +88,9 @@ check("an unhandled context type (e.g. a podcast show) is None",
       sp.resolve_context_name({"context": {"type": "show", "uri": "spotify:show:1"}}) is None)
 
 sp.get_client = _real_get_client
+# Kept before the stubs replace it, so the logged-out path can be checked
+# against the real wrapper further down.
+_real_summary_async = sp.get_now_playing_summary_async
 
 # --------------------------------------------------------- get_now_playing_*
 print("\n[get_now_playing_summary]")
@@ -122,6 +126,9 @@ check("is_playing comes through", summary["is_playing"] is True)
 check("source_name resolves via the album", summary["source_name"] == "Test Album")
 
 captured = []
+# The async wrapper checks this itself now, so that a token refresh happens on
+# the worker rather than on the menu-open press.
+sp.is_logged_in = lambda: True
 sp.get_now_playing_summary_async(captured.append)
 import time
 for _ in range(50):
@@ -133,7 +140,6 @@ check("the async wrapper delivers the same data via a background thread",
 
 # ------------------------------------------------------------------ the card
 print("\n[the card, embedded in a real OverlayWindow]")
-sp.is_logged_in = lambda: True
 sp.get_now_playing_summary_async = lambda on_done: on_done(dict(summary))
 
 from PySide6.QtCore import QTimer
@@ -228,11 +234,24 @@ check("caption doesn't claim Spotify when there's nothing to attribute to it",
 check("indicator stops animating in the empty state", card._indicator._playing is False)
 
 print("\n  -- not logged in --")
+# The logged-in check used to happen in refresh(), on the press that opens the
+# menu — and validating a cached token can refresh it over the network. It now
+# runs inside the worker job instead, so what's worth pinning down is that the
+# wrapper answers None from there without asking Spotify anything.
+sp.submit = lambda job: job()  # inline, so the answer is here on the next line
+sp.get_now_playing_summary_async = _real_summary_async
 sp.is_logged_in = lambda: False
+asked = []
+sp.get_current_playback = lambda: asked.append(True)
+delivered = []
+_real_summary_async(delivered.append)
+check("a logged-out lookup answers None", delivered == [None], f"(got {delivered})")
+check("without asking Spotify anything first", asked == [], f"(got {asked})")
+
 card._refreshing = False
 card.refresh()
 app.processEvents()
-check("refresh() doesn't even try when not logged in",
+check("so the card still shows the empty state",
       card._title_label.text() == "Nothing playing")
 
 print("\n  -- close_menu() stops the equalizer timer --")
@@ -243,6 +262,77 @@ app.processEvents()
 check("sanity: timer running before close", card._indicator._timer.isActive())
 win.close_menu()
 check("close_menu() stops the timer", not card._indicator._timer.isActive())
+
+print("\n[the Now Playing panel]")
+# The panel asks Spotify and, failing that, the Windows media session. Both
+# used to happen inline in build_nav(), i.e. on the press that opens it.
+
+
+class HeldSubmit:
+    def __init__(self):
+        self.jobs = []
+        self.defer = False
+
+    def __call__(self, job):
+        if self.defer:
+            self.jobs.append(job)
+        else:
+            job()
+
+    def run_all(self):
+        jobs, self.jobs = self.jobs, []
+        for job in jobs:
+            job()
+
+
+held = HeldSubmit()
+sp.submit = held
+sp.is_logged_in = lambda: True
+
+from panels.nowplaying import NowPlayingPanel
+from actions import now_playing as _now_playing
+
+panel = NowPlayingPanel()
+panel._loader = Loader(held, "test")
+
+PANEL_TRACK = {"id": "t1", "name": "Panel Song",
+               "artists": [{"name": "Panel Artist"}], "album": {"images": []}}
+sp.get_current_playback = lambda: {"is_playing": True, "item": PANEL_TRACK}
+
+held.defer = True
+nav = panel.build_nav()
+check("the panel opens before either lookup answers",
+      panel._song_label.text() == "Loading…", f"(got {panel._song_label.text()!r})")
+check("with nothing selectable yet", nav.rows == [], f"(got {nav.rows})")
+held.run_all()
+check("the track appears once the lookup lands",
+      "Panel Song" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
+check("and the open-in-Spotify row comes with it", nav.rows == [panel._open_row],
+      f"(got {nav.rows})")
+
+held.defer = True
+nav = panel.build_nav()
+check("reopening shows the last answer rather than blanking",
+      "Panel Song" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
+held.run_all()
+held.defer = False
+
+# Nothing on Spotify: the panel falls back to whatever Windows reports, and
+# must not claim that came from Spotify.
+sp.get_current_playback = lambda: None
+_now_playing.get = lambda: {"title": "Some Podcast", "artist": "Not Spotify"}
+panel.build_nav()
+check("it falls back to the Windows media session",
+      "Some Podcast" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
+check("without attributing it to Spotify",
+      panel.heading.text() == "Now playing", f"(got {panel.heading.text()!r})")
+check("and without offering an open-in-Spotify row",
+      panel._nav.rows == [], f"(got {panel._nav.rows})")
+
+_now_playing.get = lambda: None
+panel.build_nav()
+check("nothing playing anywhere says so",
+      panel._song_label.text() == "Nothing playing", f"(got {panel._song_label.text()!r})")
 
 print("\n" + "=" * 60)
 if failures:

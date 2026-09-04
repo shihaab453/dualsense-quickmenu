@@ -18,22 +18,6 @@ _SPEC = os.path.join(_ROOT, "DualSenseQuickMenu.spec")
 _DIST = os.path.join(_ROOT, "dist", "DualSenseQuickMenu")
 _EXE = os.path.join(_DIST, "DualSenseQuickMenu.exe")
 _ZIP = os.path.join(_ROOT, "dist", "DualSenseQuickMenu-windows.zip")
-_VERIFY_SCRIPTS = (
-    "verify_settings.py",
-    "verify_logging.py",
-    "verify_startup.py",
-    "verify_diagnostics.py",
-    "verify_startup_registry.py",
-    "verify_spotify_links.py",
-    "verify_panel_anchor.py",
-    "verify_now_playing_card.py",
-    "verify_power.py",
-    "verify_appswitcher.py",
-    "verify_hotkey.py",
-    "verify_music_pagination.py",
-    "verify_music_loading.py",
-    "verify_workers.py",
-)
 
 
 def step(text: str) -> None:
@@ -77,12 +61,23 @@ def _print_selftest_since(offset: int) -> None:
 
 
 def _run_source_verification(python: str) -> int:
-    """Run every checked-in verification script before creating build output."""
-    for script in _VERIFY_SCRIPTS:
-        result = subprocess.run([python, os.path.join("tests", script)], cwd=_ROOT)
-        if result.returncode != 0:
-            print(f"\nSOURCE VERIFICATION FAILED: {script}")
-            return result.returncode
+    """Run the checks before creating any build output.
+
+    Through pytest rather than a list of scripts kept here: this file used to
+    hold its own copy of that list, and a new suite that nobody remembered to
+    add to it was silently not gating builds. pytest discovers them from disk
+    (see tests/test_suites.py).
+
+    Hardware tests stay out - a build machine has no controller plugged in,
+    and they are opt-in for that reason. -rs so a skip is reported rather than
+    passing by silently: a suite that couldn't run here is worth seeing before
+    shipping the thing it didn't check."""
+    result = subprocess.run(
+        [python, "-m", "pytest", "-rs", "-m", "not hardware"], cwd=_ROOT
+    )
+    if result.returncode != 0:
+        print("\nSOURCE VERIFICATION FAILED")
+        return result.returncode
     return 0
 
 

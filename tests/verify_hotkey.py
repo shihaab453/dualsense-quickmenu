@@ -13,9 +13,11 @@
 # original choice; registration for it genuinely failed
 # (ERROR_HOTKEY_ALREADY_REGISTERED, confirmed via ctypes.get_last_error(),
 # not assumed) on real hardware during development — something else already
-# owns it — which is why the default is Ctrl+Alt+P instead. If this test
-# starts failing with the same error, something on the test machine has
-# claimed Ctrl+Alt+P; that's an environment conflict, not a code bug.
+# owns it — which is why the default is Ctrl+Alt+P instead. If Ctrl+Alt+P is
+# claimed too, this suite exits 2 ("couldn't run here") rather than reporting
+# failures: that is an environment conflict, not a code bug, and the most
+# common cause is a copy of the app already running on this machine. See the
+# exit-code note in tests/test_suites.py.
 
 import ctypes
 import os
@@ -48,6 +50,35 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_void_p]
 _VK_CONTROL, _VK_MENU, _VK_P = 0x11, 0x12, 0x50
 _KEYEVENTF_KEYUP = 0x0002
+
+
+# Kept in step with _EXIT_SKIPPED in tests/test_suites.py, which turns it
+# into a pytest skip.
+_EXIT_SKIPPED = 2
+_MOD_ALT, _MOD_CONTROL = 0x0001, 0x0002
+
+
+def combo_is_available() -> bool:
+    """Whether Ctrl+Alt+P can actually be claimed on this machine right now.
+
+    Every check below has to really register it, so if something else already
+    holds it they would all fail while saying nothing about the code. The
+    opposite case — a second listener correctly failing to claim a combo this
+    suite already owns — is deliberately checked further down."""
+    probe_id = 0x4321
+    registered = user32.RegisterHotKey(None, probe_id, _MOD_CONTROL | _MOD_ALT, _VK_P)
+    if registered:
+        user32.UnregisterHotKey(None, probe_id)
+    return bool(registered)
+
+
+if not combo_is_available():
+    print(
+        "SKIPPED: Ctrl+Alt+P is already claimed by another process on this "
+        "machine, so this suite can't register it. The usual cause is a copy "
+        "of the app itself already running - close it and run again."
+    )
+    sys.exit(_EXIT_SKIPPED)
 
 
 def press_ctrl_alt_p() -> None:

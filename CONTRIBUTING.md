@@ -30,20 +30,33 @@ You keep the copyright in your own contribution. You're confirming you wrote it
 There's no CI, so please run the checks yourself:
 
 ```bash
-.venv\Scripts\python.exe tests\verify_settings.py
-.venv\Scripts\python.exe tests\verify_logging.py
-.venv\Scripts\python.exe tests\verify_startup.py
-.venv\Scripts\python.exe tests\verify_diagnostics.py
-.venv\Scripts\python.exe tests\verify_startup_registry.py
-.venv\Scripts\python.exe tests\verify_spotify_links.py
-.venv\Scripts\python.exe tests\verify_panel_anchor.py
-.venv\Scripts\python.exe tests\verify_now_playing_card.py
-.venv\Scripts\python.exe tests\verify_appswitcher.py
-.venv\Scripts\python.exe tests\verify_hotkey.py
+.venv\Scripts\python.exe -m pytest
 ```
 
-All four should exit 0. If you changed anything that ends up in a build, also
-run:
+That takes about half a minute and should end in `passed`. It needs the dev
+dependencies (`pip install -r requirements-dev.txt`).
+
+Some of the checks use real Windows state - they write to the registry under a
+test-only name, briefly take foreground focus, and register a real global
+hotkey - so they want a normal desktop session. If that's inconvenient right
+now, run the hermetic ones on their own:
+
+```bash
+.venv\Scripts\python.exe -m pytest -m unit
+```
+
+A `skipped` result is not a failure. The hotkey checks skip themselves when
+something else on your machine already holds Ctrl+Alt+P, which is usually a
+copy of this app already running.
+
+Each group of checks is also a standalone script you can run directly, which
+is the quickest way to work on one:
+
+```bash
+.venv\Scripts\python.exe tests\verify_settings.py
+```
+
+If you changed anything that ends up in a build, also run:
 
 ```bash
 .venv\Scripts\python.exe tools\build.py
@@ -53,7 +66,7 @@ which builds, runs the packaged app's `--selftest`, and refuses to package a
 build that fails it.
 
 **Read [HANDOFF.md](HANDOFF.md) first if you're touching layout code.** It
-documents eight specific Qt and Spotify API behaviours that have each cost real
+documents the specific Qt and Spotify API behaviours that have each cost real
 debugging time here — several of them fail silently rather than raising, so
 "it looks fine" isn't much evidence. The one that bites most often: a row of
 widgets needing its own sub-layout must be wrapped in a real `QWidget` and added

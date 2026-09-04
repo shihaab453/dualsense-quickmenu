@@ -20,6 +20,9 @@ _FILE_NAME = "settings.json"
 
 _DEFAULTS = {
     "spotify_client_id": "",
+    # "auto" uses the normal Ctrl+Alt+P shortcut, then its documented
+    # fallback if another application has claimed it.
+    "hotkey_shortcut": "auto",
     # False until the app has completed one startup. Drives the first-run
     # experience: the app has no window of its own, so without something
     # happening on first launch, double-clicking it looks like nothing
@@ -91,6 +94,14 @@ def get_spotify_client_id() -> str:
 
 def set_spotify_client_id(client_id: str) -> None:
     _update("spotify_client_id", (client_id or "").strip())
+
+
+def get_hotkey_shortcut() -> str:
+    return str(load().get("hotkey_shortcut") or "auto")
+
+
+def set_hotkey_shortcut(shortcut: str) -> None:
+    _update("hotkey_shortcut", shortcut if shortcut else "auto")
 
 
 def is_first_run() -> bool:

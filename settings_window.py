@@ -14,11 +14,13 @@
 # up new settings on its own.
 
 import os
+import re
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -41,11 +43,11 @@ log = logs.get(__name__)
 
 _DASHBOARD_URL = "https://developer.spotify.com/dashboard"
 
-# Spotify client IDs are 32 lowercase hex characters. Checking the shape
-# catches the two mistakes people actually make — pasting the dashboard URL,
-# or pasting the app's name — before they turn into a confusing OAuth failure
-# several steps later.
+# Spotify client IDs are 32 lowercase hexadecimal characters. Checking the
+# full shape catches pasted URLs, app names, and 32-character values that
+# would otherwise fail later during OAuth.
 _CLIENT_ID_LENGTH = 32
+_CLIENT_ID_RE = re.compile(r"[0-9a-f]{32}")
 
 _STYLE = """
 #root { background: #15151c; }
@@ -197,19 +199,24 @@ class SettingsWindow(QDialog):
         fullscreen_note.setTextFormat(Qt.RichText)
         lay.addWidget(fullscreen_note)
 
-        # No live control over this here — the real HotkeyListener lives in
-        # main.py, started once at app launch — just visibility into whether
-        # it actually took. reload() below keeps this current each time the
-        # window is opened.
         hotkey_note = QLabel(
-            f"<b>No controller handy?</b> Press <b>{hotkey.DISPLAY_NAME}</b> "
-            "anywhere to open or close the overlay — it works the same as the "
-            "PS button, even while a game has focus."
+            "<b>No controller handy?</b> This shortcut opens or closes the "
+            "overlay anywhere, even while a game has focus. Automatic tries "
+            f"<b>{hotkey.DISPLAY_NAME}</b>, then <b>Ctrl+Alt+Shift+P</b> if needed."
         )
         hotkey_note.setObjectName("hint")
         hotkey_note.setWordWrap(True)
         hotkey_note.setTextFormat(Qt.RichText)
         lay.addWidget(hotkey_note)
+
+        hotkey_row = QHBoxLayout()
+        hotkey_row.addWidget(QLabel("Keyboard shortcut"))
+        self._hotkey_combo = QComboBox()
+        for value, label in hotkey.shortcut_choices():
+            self._hotkey_combo.addItem(label, value)
+        self._hotkey_combo.currentIndexChanged.connect(self._on_hotkey_changed)
+        hotkey_row.addWidget(self._hotkey_combo, 1)
+        lay.addLayout(hotkey_row)
 
         self._hotkey_status = QLabel()
         self._hotkey_status.setObjectName("status")
@@ -218,15 +225,28 @@ class SettingsWindow(QDialog):
 
     def _refresh_hotkey_status(self) -> None:
         registered = diagnostics.hotkey_registered()
+        registration = hotkey.last_registration()
         if registered is None:
             self._hotkey_status.setText("")
         elif registered:
-            self._hotkey_status.setText(f"{hotkey.DISPLAY_NAME} is active.")
+            display_name = (registration or {}).get("display_name") or hotkey.DISPLAY_NAME
+            if (registration or {}).get("used_fallback"):
+                self._hotkey_status.setText(
+                    f"{display_name} is active because {hotkey.DISPLAY_NAME} is in use."
+                )
+            else:
+                self._hotkey_status.setText(f"{display_name} is active.")
         else:
             self._hotkey_status.setText(
-                f"{hotkey.DISPLAY_NAME} could not be registered — another "
-                "running app likely already uses it."
+                "The selected shortcut could not be registered. Another running "
+                "app likely already uses it."
             )
+
+    def _on_hotkey_changed(self) -> None:
+        if self._loading:
+            return
+        settings.set_hotkey_shortcut(self._hotkey_combo.currentData())
+        self._hotkey_status.setText("Saved. Restart the app to apply this shortcut.")
 
     def _on_startup_toggled(self, checked: bool) -> None:
         # Guard against reacting to reload() setting the box programmatically,
@@ -248,6 +268,9 @@ class SettingsWindow(QDialog):
         # claim a state that didn't take.
         self._loading = True
         self._startup_checkbox.setChecked(startup.is_enabled())
+        selected = settings.get_hotkey_shortcut()
+        index = self._hotkey_combo.findData(selected)
+        self._hotkey_combo.setCurrentIndex(index if index >= 0 else 0)
         self._loading = False
 
     # ---- Spotify ----
@@ -332,9 +355,15 @@ class SettingsWindow(QDialog):
         entered = self._client_id_field.text().strip()
         if entered and len(entered) != _CLIENT_ID_LENGTH:
             self._spotify_status.setText(
-                f"That doesn't look like a client ID — it should be "
+                f"That doesn't look like a client ID. It should be "
                 f"{_CLIENT_ID_LENGTH} characters, but that was {len(entered)}. "
                 "Make sure you copied the Client ID and not the app name or URL."
+            )
+            return
+        if entered and not _CLIENT_ID_RE.fullmatch(entered):
+            self._spotify_status.setText(
+                "That doesn't look like a client ID. It should contain only "
+                "lowercase letters a-f and numbers 0-9."
             )
             return
 

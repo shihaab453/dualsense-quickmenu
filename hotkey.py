@@ -1,5 +1,5 @@
 # A global keyboard shortcut that opens/closes the overlay from anywhere,
-# even while a game or another app has focus — Ctrl+Alt+Space, acting as a
+# even while a game or another app has focus, acting as a
 # stand-in for the PS button itself.
 #
 # Why this needs to exist alongside the keyboard fallback overlay.py already
@@ -27,6 +27,7 @@ import threading
 from ctypes import wintypes
 
 import logs
+import settings
 
 log = logs.get(__name__)
 
@@ -46,19 +47,47 @@ kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 _MOD_ALT = 0x0001
 _MOD_CONTROL = 0x0002
+_MOD_SHIFT = 0x0004
 _MOD_NOREPEAT = 0x4000  # one WM_HOTKEY per physical press, not one per ~30ms while held
 _VK_P = 0x50
 _WM_HOTKEY = 0x0312
 _WM_QUIT = 0x0012
 _HOTKEY_ID = 1
 
-# Ctrl+Alt+P. Chosen to avoid the common overlay-toggle combos gamers are
-# likely to already have bound to something else — Alt+Z (NVIDIA), Shift+Tab
-# (Steam/Discord), Win+G (Xbox Game Bar). Ctrl+Alt+Space was the first choice,
-# but registration genuinely failed (ERROR_HOTKEY_ALREADY_REGISTERED) on real
-# hardware during testing — something else already owns it — confirmed with
-# ctypes.get_last_error(), not assumed from a hunch.
-DISPLAY_NAME = "Ctrl+Alt+P"
+# These avoid common gaming-overlay combinations such as Alt+Z (NVIDIA),
+# Shift+Tab (Steam/Discord), and Win+G (Xbox Game Bar). The fallback adds
+# Shift rather than choosing an unrelated key, so it remains easy to remember.
+_SHORTCUTS = {
+    "ctrl_alt_p": ("Ctrl+Alt+P", _MOD_CONTROL | _MOD_ALT, _VK_P),
+    "ctrl_alt_shift_p": ("Ctrl+Alt+Shift+P", _MOD_CONTROL | _MOD_ALT | _MOD_SHIFT, _VK_P),
+}
+_AUTO = "auto"
+DISPLAY_NAME = _SHORTCUTS["ctrl_alt_p"][0]
+
+# The live listener updates this after it has tried registration. It lets the
+# Settings dialog describe the shortcut actually in use without importing
+# main.py, where the listener instance belongs.
+_last_registration = None
+
+
+def shortcut_choices():
+    """(stored value, human label) choices shown in Settings."""
+    return (
+        (_AUTO, f"Automatic ({DISPLAY_NAME}, then Ctrl+Alt+Shift+P)"),
+        ("ctrl_alt_p", DISPLAY_NAME),
+        ("ctrl_alt_shift_p", "Ctrl+Alt+Shift+P"),
+    )
+
+
+def registration_candidates(shortcut: str):
+    """Shortcut identifiers to try for a stored preference."""
+    if shortcut == _AUTO:
+        return ("ctrl_alt_p", "ctrl_alt_shift_p")
+    return (shortcut,) if shortcut in _SHORTCUTS else registration_candidates(_AUTO)
+
+
+def last_registration():
+    return _last_registration
 
 
 class HotkeyListener:
@@ -67,8 +96,16 @@ class HotkeyListener:
     controller.DualSenseListener.on_button, and the same expectation that the
     caller hops back to the Qt main thread before touching any widgets."""
 
-    def __init__(self, on_pressed=None):
+    def __init__(self, on_pressed=None, on_registration=None, shortcut=None):
         self._on_pressed = on_pressed
+        self._on_registration = on_registration
+        self.shortcut = shortcut or settings.get_hotkey_shortcut()
+        self.requested_display_name = (
+            "Automatic" if self.shortcut == _AUTO
+            else _SHORTCUTS.get(self.shortcut, _SHORTCUTS["ctrl_alt_p"])[0]
+        )
+        self.display_name = None
+        self.used_fallback = False
         self._thread = None
         self._thread_id = None
         self.registered = False  # readable after start() settles, for diagnostics
@@ -88,23 +125,44 @@ class HotkeyListener:
     # ---- runs on the background thread ----
 
     def _run(self) -> None:
+        global _last_registration
         self._thread_id = kernel32.GetCurrentThreadId()
-        self.registered = bool(user32.RegisterHotKey(
-            None, _HOTKEY_ID, _MOD_CONTROL | _MOD_ALT | _MOD_NOREPEAT, _VK_P
-        ))
+        active_shortcut = None
+        candidates = registration_candidates(self.shortcut)
+        for candidate in candidates:
+            display_name, modifiers, virtual_key = _SHORTCUTS[candidate]
+            if user32.RegisterHotKey(
+                None, _HOTKEY_ID, modifiers | _MOD_NOREPEAT, virtual_key
+            ):
+                active_shortcut = candidate
+                self.display_name = display_name
+                self.used_fallback = candidate != candidates[0]
+                break
+
+        self.registered = active_shortcut is not None
         if not self.registered:
-            # Not fatal — the app works fine without it, just without this
-            # one extra way to open it. Most likely cause: another running
-            # app already claimed Ctrl+Alt+Space.
             log.warning(
-                "Couldn't register the global hotkey (%s) — it may already be "
-                "bound by another app. The overlay still opens normally via "
-                "the controller or the tray icon's Show menu.",
-                DISPLAY_NAME,
+                "Couldn't register a global hotkey (%s). The overlay still "
+                "opens via the controller or the tray icon's Show menu.",
+                ", ".join(_SHORTCUTS[item][0] for item in candidates),
             )
+            _last_registration = {
+                "registered": False,
+                "display_name": None,
+                "requested_display_name": self.requested_display_name,
+                "used_fallback": False,
+            }
+            self._notify_registration()
             return
 
-        log.info("Global hotkey registered: %s", DISPLAY_NAME)
+        _last_registration = {
+            "registered": True,
+            "display_name": self.display_name,
+            "requested_display_name": self.requested_display_name,
+            "used_fallback": self.used_fallback,
+        }
+        log.info("Global hotkey registered: %s", self.display_name)
+        self._notify_registration()
         try:
             msg = wintypes.MSG()
             # NULL hWnd: hotkey messages land on this thread's own queue
@@ -116,3 +174,7 @@ class HotkeyListener:
         finally:
             user32.UnregisterHotKey(None, _HOTKEY_ID)
             log.info("Global hotkey unregistered")
+
+    def _notify_registration(self) -> None:
+        if self._on_registration:
+            self._on_registration(_last_registration)

@@ -27,6 +27,13 @@ import settings
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_links_")
 
 import actions.spotify_client as sp
+from actions import album_art
+
+# The assertions cover Spotify links, not artwork fetching. Returning no art
+# keeps the panel's normal placeholder and prevents a background network call.
+album_art.get = lambda _url, _size, _radius, callback: callback(None)
+# The Detail-view navigation below should never control a real player.
+sp.play_track = lambda _uri: None
 
 SPOTIFY_TRACK = {
     "id": "4cOdK2wGLETKBW3PvgPWqT",
@@ -130,7 +137,6 @@ def check_music_detail():
     sp.is_liked = lambda tid: False
 
     overlay.open_menu()
-    overlay.handle_button("right")
     overlay.handle_button("right")   # music
     overlay.handle_button("cross")
     QTimer.singleShot(300, drill_to_detail)

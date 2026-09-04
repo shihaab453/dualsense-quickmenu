@@ -168,6 +168,77 @@ check(
     warnings and "DS4Windows" in warnings[0].getMessage(),
 )
 
+# ------------------------------------------ controller read-failure recovery
+print("\n[controller read-failure recovery]")
+# A read can fail while the controller remains physically present. The listener
+# must close that broken instance and return to its existing outer reconnect
+# loop, rather than letting its background thread die.
+capture.records.clear()
+
+
+class _State:
+    ps = DpadUp = DpadDown = DpadLeft = DpadRight = cross = circle = False
+
+
+class _Battery:
+    Level = 77
+
+
+class _ReadFailureDualSense:
+    instances = []
+
+    def __init__(self):
+        self.number = len(self.instances)
+        self.connected = False
+        self.closed = False
+        self.instances.append(self)
+
+    def init(self):
+        self.connected = True
+
+    @property
+    def state(self):
+        if self.number == 0:
+            raise OSError("simulated HID read failure")
+        return _State()
+
+    @property
+    def battery(self):
+        return _Battery()
+
+    def close(self):
+        self.closed = True
+        self.connected = False
+
+
+controller.pydualsense = _ReadFailureDualSense
+connections = []
+listener = controller.DualSenseListener(on_connection_change=connections.append)
+listener.start()
+deadline = time.monotonic() + 1
+while len(connections) < 3 and time.monotonic() < deadline:
+    time.sleep(0.01)
+listener.stop()
+
+check(
+    "a read failure creates a replacement controller",
+    len(_ReadFailureDualSense.instances) >= 2,
+    f"(created {len(_ReadFailureDualSense.instances)} instances)",
+)
+check(
+    "a failed read reports disconnect then reconnect",
+    connections[:3] == [True, False, True],
+    f"(got {connections})",
+)
+check(
+    "the failed controller is closed before reconnecting",
+    _ReadFailureDualSense.instances and _ReadFailureDualSense.instances[0].closed,
+)
+check(
+    "the read failure is logged",
+    any("read failed" in record.getMessage() for record in capture.records),
+)
+
 # ---------------------------------------------------------------- rotation
 print("\n[rotation]")
 check("rotating handler is capped", any(

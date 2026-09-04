@@ -3,12 +3,10 @@
 #
 #   .venv\Scripts\python.exe tools\build.py
 #
-# Steps: PyInstaller -> run the built exe's --selftest -> zip it. The selftest
-# is not optional, because the ways a packaged build of this app breaks are all
-# silent: a missing QtSvg plugin renders every icon blank, a missing font
-# quietly downgrades all text, an unbundled hidapi.dll means the PS button
-# never responds, and a missing winrt kills the Now Playing fallback. None of
-# them raise, so "it built" tells you almost nothing.
+# Steps: source verification -> PyInstaller -> run the built exe's --selftest
+# -> zip it. Neither verification stage is optional. Source tests catch
+# behavior regressions, while the packaged selftest catches silent frozen-build
+# failures such as a missing QtSvg plugin, font, hidapi.dll, or winrt module.
 
 import os
 import subprocess
@@ -20,6 +18,19 @@ _SPEC = os.path.join(_ROOT, "DualSenseQuickMenu.spec")
 _DIST = os.path.join(_ROOT, "dist", "DualSenseQuickMenu")
 _EXE = os.path.join(_DIST, "DualSenseQuickMenu.exe")
 _ZIP = os.path.join(_ROOT, "dist", "DualSenseQuickMenu-windows.zip")
+_VERIFY_SCRIPTS = (
+    "verify_settings.py",
+    "verify_logging.py",
+    "verify_startup.py",
+    "verify_diagnostics.py",
+    "verify_startup_registry.py",
+    "verify_spotify_links.py",
+    "verify_panel_anchor.py",
+    "verify_now_playing_card.py",
+    "verify_power.py",
+    "verify_appswitcher.py",
+    "verify_hotkey.py",
+)
 
 
 def step(text: str) -> None:
@@ -62,8 +73,24 @@ def _print_selftest_since(offset: int) -> None:
             print("  " + line.split("selftest:", 1)[1].strip())
 
 
+def _run_source_verification(python: str) -> int:
+    """Run every checked-in verification script before creating build output."""
+    for script in _VERIFY_SCRIPTS:
+        result = subprocess.run([python, os.path.join("tests", script)], cwd=_ROOT)
+        if result.returncode != 0:
+            print(f"\nSOURCE VERIFICATION FAILED: {script}")
+            return result.returncode
+    return 0
+
+
 def main() -> int:
     python = sys.executable
+
+    step("source verification")
+    result = _run_source_verification(python)
+    if result != 0:
+        print("not packaging this build.")
+        return result
 
     step("PyInstaller")
     result = subprocess.run(
@@ -82,7 +109,12 @@ def main() -> int:
     # stdout: it's a windowed build with no console of its own, so whether
     # anything reaches this terminal depends on how we were invoked.
     log_offset = _log_size()
-    result = subprocess.run([_EXE, "--selftest"], cwd=_DIST)
+    # CI and remote build shells may not have an interactive desktop. The
+    # self-test renders assets but never shows a window, so Qt's offscreen
+    # platform is the appropriate backend and avoids waiting for a display.
+    selftest_env = os.environ.copy()
+    selftest_env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run([_EXE, "--selftest"], cwd=_DIST, env=selftest_env)
     _print_selftest_since(log_offset)
     if result.returncode != 0:
         print("\nSELFTEST FAILED — not packaging this build.")

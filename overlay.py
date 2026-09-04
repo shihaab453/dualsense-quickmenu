@@ -30,7 +30,6 @@ from icons import render_battery_pill, render_icon, render_spotify_logo
 from nav import NavStack, RowList
 from panels.appswitcher import AppSwitcherPanel
 from panels.base import Tile
-from panels.chats import ChatsPanel
 from panels.music import MusicPanel
 from panels.nowplaying import NowPlayingPanel
 from panels.power import PowerPanel
@@ -44,14 +43,12 @@ log = logs.get(__name__)
 # this list, so removing an entry is all that's needed.
 _TRAY_ICONS = [
     ("home", "Close Control Centre"),
-    ("chats", "Chats & Calls"),
     ("music", "Music"),
     ("sound", "Sound"),
     ("power", "Power"),
 ]
 
 _PANEL_CLASSES = {
-    "chats": ChatsPanel,
     "music": MusicPanel,
     "sound": SoundPanel,
     "power": PowerPanel,
@@ -150,8 +147,7 @@ class _RefreshSignal(QObject):
 
 
 class _NowPlayingCard(QFrame):
-    """The home screen's Now Playing card — the only functional one of the
-    four; the other three are decorative placeholders in the mockup too.
+    """The home screen's Now Playing card.
 
     Deliberately shows Spotify data only, nothing else. Unlike the Now
     Playing *panel* (panels/nowplaying.py), which falls back to Windows'
@@ -346,30 +342,12 @@ class _NowPlayingCard(QFrame):
             self.refresh()
 
 
-def _decorative_card(caption: str) -> QFrame:
-    card = QFrame()
-    card.setFixedSize(260, 300)
-    card.setStyleSheet(
-        "background: rgba(35,36,39,200); border-radius: 16px;"
-        " border: 1px solid rgba(255,255,255,0.06);"
-    )
-    lay = QVBoxLayout(card)
-    lay.setContentsMargins(18, 18, 18, 18)
-    lay.addStretch(1)
-    label = QLabel(caption)
-    label.setStyleSheet("font-size: 14px; color: rgba(255,255,255,0.4);")
-    lay.addWidget(label)
-    return card
-
-
 class _AppSwitcherCard(QFrame):
     """The home card that opens the live Alt-Tab-style switcher panel
     (panels/appswitcher.py). Unlike Now Playing, there's no single "current"
-    thing to preview — no one obviously-right window to show a thumbnail of
-    the way Now Playing has one current track — so this is deliberately a
-    simple static icon + label, matching the visual weight of the 3 purely-
-    decorative cards, but actually functional: selectable, and opens a panel
-    on Cross the same way Now Playing's card does."""
+    thing to preview, so this is deliberately a simple static icon and label.
+    It is selectable and opens a panel on Cross, the same way Now Playing's
+    card does."""
 
     def __init__(self):
         super().__init__()
@@ -487,23 +465,11 @@ class OverlayWindow(QWidget):
         cards_lay = QHBoxLayout(self._cards_widget)
         cards_lay.setSpacing(22)
         cards_lay.setContentsMargins(0, 0, 0, 0)
-        # Explicit bottom alignment on every card: most are a fixed height, so
-        # this changes nothing for them, but the Now Playing card's height
-        # varies with selection (see _NowPlayingCard's docstring) — without
-        # this, QHBoxLayout's default alignment for children shorter than the
-        # tallest one is to hang them from the top, which would visibly detach
-        # the other cards' bottoms from the row's shared baseline the moment
-        # the real card grows taller than them.
+        # Explicit bottom alignment keeps the App Switcher card aligned when
+        # the Now Playing card grows after it is selected.
         cards_lay.addWidget(self._now_playing_card, 0, Qt.AlignBottom)
-        # Next to Now Playing, per the user's own request — not a new tray
-        # icon, reached only from this card, same pattern Now Playing uses.
+        # Reached from the home cards rather than the tray.
         cards_lay.addWidget(self._app_switcher_card, 0, Qt.AlignBottom)
-        for caption in (
-            "Recently created\nNew Clip Saved",
-            "Discover\nQuick Setup Tips",
-            "Recently created\nNew Screenshot",
-        ):
-            cards_lay.addWidget(_decorative_card(caption), 0, Qt.AlignBottom)
 
     # ---- input handling ----
 
@@ -620,7 +586,9 @@ class OverlayWindow(QWidget):
             return
         panel = self._panels.get(key)
         if panel is None:
-            panel = cls()
+            panel = cls(
+                is_cross_held=lambda: self._is_held("cross")
+            ) if key == "power" else cls()
             panel.setParent(self)
             # Lets a panel with multiple internal views (Library/Songs/
             # Detail) push further levels itself and ask for a re-layout

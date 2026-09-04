@@ -29,6 +29,16 @@ import logs
 import settings_window
 from actions import spotify_client as sp
 
+# This script only checks which Music rows are shown. It does not test Spotify
+# authentication, so never let a temporary client ID start PKCE or open a
+# browser while constructing the panel below.
+sp.is_logged_in = lambda: False
+sp.login_async = lambda on_done: on_done(False, "Spotify login disabled in this test")
+# OverlayWindow refreshes its home-card data whenever the menu opens. Keep
+# that unrelated background fetch local when this script later reports a
+# configured, logged-in state to exercise Music's library view.
+sp.get_now_playing_summary_async = lambda on_done: on_done(None)
+
 # This script opens the Power panel to confirm the tray still maps to the right
 # panels after the Task Switcher was removed. Neutered before any panel can be
 # constructed, per HANDOFF.md's testing note — panels are built lazily, so
@@ -123,8 +133,7 @@ settings_window.open_settings = lambda: opened.append(True)
 
 def open_music():
     overlay.open_menu()
-    overlay.handle_button("right")
-    overlay.handle_button("right")   # tray index 2 == music
+    overlay.handle_button("right")   # tray index 1 == music
     overlay.handle_button("cross")
 
 
@@ -195,11 +204,11 @@ def check_tray():
     keys = [key for key, _label in overlay_module._TRAY_ICONS]
     check("tray no longer offers a Task Switcher", "switcher" not in keys,
           f"(got {keys})")
-    check("tray is home/chats/music/sound/power",
-          keys == ["home", "chats", "music", "sound", "power"], f"(got {keys})")
+    check("tray is home/music/sound/power",
+          keys == ["home", "music", "sound", "power"], f"(got {keys})")
 
     overlay.open_menu()
-    for _ in range(4):
+    for _ in range(3):
         overlay.handle_button("right")  # last icon is now Power
     overlay.handle_button("cross")
     QTimer.singleShot(120, after_power_open)
@@ -209,36 +218,6 @@ def after_power_open():
     panel = overlay._active_panel
     check("the last tray icon opens Power", type(panel).__name__ == "PowerPanel",
           f"(got {type(panel).__name__})")
-    overlay.close_menu()
-    QTimer.singleShot(20, check_chats)
-
-
-def check_chats():
-    # The Chats icon used to do literally nothing when pressed, which reads as
-    # broken. It must now open a panel saying the feature isn't built.
-    overlay.open_menu()
-    overlay.handle_button("right")  # tray index 1 == chats
-    overlay.handle_button("cross")
-    QTimer.singleShot(120, after_chats_open)
-
-
-def after_chats_open():
-    panel = overlay._active_panel
-    check("Chats icon opens a panel", type(panel).__name__ == "ChatsPanel",
-          f"(got {type(panel).__name__ if panel else None})")
-    texts = " ".join(
-        child.text() for child in panel.findChildren(type(panel.heading))
-    )
-    check("it says the feature is under construction",
-          "under construction" in texts, f"(got {texts!r})")
-
-    # No rows, so Circle must still get the user out rather than trapping them.
-    overlay.handle_button("cross")   # nothing to activate; must not crash
-    overlay.handle_button("down")    # no rows to move between; must not crash
-    overlay.handle_button("circle")
-    check("Circle backs out of a panel with no rows", overlay._active_panel is None)
-    check("and the overlay is still open at the tray", overlay.isVisible())
-
     overlay.close_menu()
     QTimer.singleShot(20, check_settings_window)
 
@@ -251,6 +230,12 @@ def check_settings_window():
           win._client_id_field.text() == "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
     check("settings window no longer has a games list",
           not hasattr(win, "_games_list"))
+    check("hotkey choice defaults to Automatic",
+          win._hotkey_combo.currentData() == "auto",
+          f"(got {win._hotkey_combo.currentData()!r})")
+    win._hotkey_combo.setCurrentIndex(win._hotkey_combo.findData("ctrl_alt_shift_p"))
+    check("selected hotkey choice is saved",
+          settings.get_hotkey_shortcut() == "ctrl_alt_shift_p")
 
     # A too-short ID must be rejected without touching what's stored.
     win._client_id_field.setText("not-a-real-client-id")
@@ -258,6 +243,14 @@ def check_settings_window():
     check("short ID is rejected", "doesn't look like a client ID" in win._spotify_status.text(),
           f"(got {win._spotify_status.text()!r})")
     check("rejected ID was not saved",
+          settings.get_spotify_client_id() == "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
+
+    # Length alone is not enough: a Spotify client ID uses lowercase hex.
+    win._client_id_field.setText("g" * 32)
+    win._save_client_id()
+    check("non-hex ID is rejected", "letters a-f" in win._spotify_status.text(),
+          f"(got {win._spotify_status.text()!r})")
+    check("non-hex ID was not saved",
           settings.get_spotify_client_id() == "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
 
     # A valid-shaped, different ID saves and reports back.

@@ -30,9 +30,6 @@ between them, Cross to open one, Circle to back out, PS again to close):
   setup needed); D-pad up/down picks one, and Cross switches to it and closes
   the overlay. It's built fresh from Windows itself every time it's opened,
   so it always reflects what's actually running.
-- **Chats & Calls** isn't built yet. The icon is there, and opening it just
-  says so. The home cards other than Now Playing and Switch App are
-  decorative, matching the original PS5 UI they're modeled on.
 
 ## Controls
 
@@ -47,19 +44,19 @@ between them, Cross to open one, Circle to back out, PS again to close):
 ## Using it without a controller
 
 Press **Ctrl+Alt+P** anywhere, even while a game has focus, to open or close
-the overlay, exactly like the PS button. This isn't just for testing: if you
-don't always have the controller plugged in, it's a full second way to use
-the app day to day, not just a fallback.
+the overlay, exactly like the PS button. If another app has claimed it, the
+default Automatic setting tries **Ctrl+Alt+Shift+P** instead and shows a tray
+notification. This isn't just for testing: if you don't always have the
+controller plugged in, it's a full second way to use the app day to day.
 
 Once it's open, arrow keys move the selection, **Enter** activates it, and
 **Esc** backs out, the same as D-pad/Cross/Circle. The one thing a keyboard
 can't do on its own is *open* the menu in the first place, which is exactly
-what Ctrl+Alt+P is for. The tray icon's right-click **Show menu** works too.
+what the global shortcut is for. The tray icon's right-click **Show menu** works too.
 
-If Ctrl+Alt+P doesn't do anything, another running app has probably already
-claimed that combination. Settings shows whether it actually registered
-(right-click the tray icon → **Settings…**), and **Copy diagnostics** reports
-it too.
+Settings lets you choose Automatic, Ctrl+Alt+P, or Ctrl+Alt+Shift+P for the
+next launch, and shows whether the active shortcut registered successfully.
+**Copy diagnostics** reports that state too.
 
 ## Setup
 
@@ -198,9 +195,9 @@ Nothing is uploaded anywhere automatically.
   other tool (DS4Windows, Steam with "PlayStation Controller Support"
   enabled) is capturing the controller. Ctrl+Alt+P works either way in the
   meantime.
-- **Ctrl+Alt+P does nothing**: another running app most likely already has
-  that combination bound to something else. Settings shows whether it
-  actually registered.
+- **The keyboard shortcut does nothing**: Settings shows whether it registered.
+  Automatic tries Ctrl+Alt+Shift+P if Ctrl+Alt+P was already claimed; choose a
+  specific option there and restart the app if you prefer one permanently.
 - **Menu doesn't appear over the game**: the game is in exclusive fullscreen.
   Switch it to borderless windowed.
 - **Music panel says "Set up Spotify…"**: no client ID has been saved yet.
@@ -236,12 +233,11 @@ Nothing is uploaded anywhere automatically.
 
 ## Not yet supported (planned)
 
-Chats & Calls (the tray icon exists and says it's under construction),
-Bluetooth, Discord controls, switching audio output/input device (right now
-it just shows the current one; actually switching needs an undocumented
-Windows COM interface), and the nested Shuffle/Repeat sub-menu from the
-original PS5 UI (this app uses direct one-press toggle/cycle buttons instead,
-which does the same job).
+Bluetooth, Discord controls, switching audio output/input device (right now it
+just shows the current one; actually switching needs an undocumented Windows
+COM interface), and the nested Shuffle/Repeat sub-menu from the original PS5
+UI (this app uses direct one-press toggle/cycle buttons instead, which does
+the same job).
 
 ## Licence
 

@@ -22,6 +22,11 @@ import settings
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_nowplaying_")
 
 import actions.spotify_client as sp
+from actions import album_art
+
+# This test supplies fake playback data. Keep the corresponding album-art
+# requests local too, leaving the panel's placeholder in place.
+album_art.get = lambda _url, _size, _radius, callback: callback(None)
 
 failures = []
 

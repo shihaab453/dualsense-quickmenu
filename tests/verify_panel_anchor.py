@@ -51,8 +51,7 @@ win = OverlayWindow(get_battery=lambda: 88)
 # Spotify is configured, logged in, or showing the library, so there's no
 # need to stub Spotify calls just to check geometry.
 win.open_menu()
-win.handle_button("right")
-win.handle_button("right")   # tray index 2 == music
+win.handle_button("right")   # tray index 1 == music
 win.handle_button("cross")
 app.processEvents()
 

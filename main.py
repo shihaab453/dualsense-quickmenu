@@ -82,6 +82,7 @@ class InputBridge(QObject):
     button_pressed = Signal(str)
     connection_changed = Signal(bool)
     hotkey_pressed = Signal()
+    hotkey_registration_changed = Signal(object)
 
 
 def _make_tray_icon() -> QIcon:
@@ -266,7 +267,10 @@ def main() -> None:
     # already opens the overlay if it's closed and closes it if it's open,
     # exactly what a real PS press does, so the hotkey needs no logic of its
     # own beyond triggering that same call.
-    hotkey_listener = hotkey.HotkeyListener(on_pressed=bridge.hotkey_pressed.emit)
+    hotkey_listener = hotkey.HotkeyListener(
+        on_pressed=bridge.hotkey_pressed.emit,
+        on_registration=bridge.hotkey_registration_changed.emit,
+    )
     bridge.hotkey_pressed.connect(lambda: overlay.handle_button("ps"))
 
     # Lets Settings -> Copy diagnostics state whether a controller is actually
@@ -283,13 +287,37 @@ def main() -> None:
     # The hotkey is mentioned in the label itself (not bound as this QAction's
     # own Qt shortcut, which would only fire while the tray menu has focus) —
     # this is purely where someone would discover the real, global one exists.
-    tray_menu.addAction(f"Show menu ({hotkey.DISPLAY_NAME})").triggered.connect(overlay.open_menu)
+    show_menu_action = tray_menu.addAction(f"Show menu ({hotkey.DISPLAY_NAME})")
+    show_menu_action.triggered.connect(overlay.open_menu)
     # First-run setup (the Spotify client ID) can't happen on the D-pad-driven
     # overlay — see settings_window's module docstring.
     tray_menu.addAction("Settings…").triggered.connect(settings_window.open_settings)
     tray_menu.addAction("Quit").triggered.connect(app.quit)
     tray.setContextMenu(tray_menu)
     tray.show()
+
+    def update_hotkey_registration(result) -> None:
+        if result["registered"]:
+            show_menu_action.setText(f"Show menu ({result['display_name']})")
+            if result["used_fallback"]:
+                tray.showMessage(
+                    "Keyboard shortcut changed",
+                    f"{hotkey.DISPLAY_NAME} is already in use. "
+                    f"Using {result['display_name']} instead.",
+                    QIcon(render_app_icon(64)),
+                    10000,
+                )
+            return
+        show_menu_action.setText("Show menu")
+        tray.showMessage(
+            "Keyboard shortcut unavailable",
+            "No selected keyboard shortcut could be registered. Use the "
+            "controller or this tray menu, or choose another shortcut in Settings.",
+            QIcon(render_app_icon(64)),
+            10000,
+        )
+
+    bridge.hotkey_registration_changed.connect(update_hotkey_registration)
 
     if settings.is_first_run():
         _run_first_launch(tray)

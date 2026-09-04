@@ -194,6 +194,16 @@ class DualSenseListener:
             self._emit_connection(True)
             try:
                 self._poll(ds)
+            except Exception:
+                # A live HID handle can fail independently of the cable being
+                # pulled, for example after another program temporarily takes
+                # the controller. Without this catch the polling thread exits
+                # permanently and the normal reconnect loop never runs.
+                if self._running:
+                    log.warning(
+                        "DualSense read failed; closing it and attempting to reconnect",
+                        exc_info=True,
+                    )
             finally:
                 self.connected = False
                 self.battery_percent = None

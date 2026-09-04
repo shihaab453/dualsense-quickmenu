@@ -70,7 +70,10 @@ def wait_until(predicate, timeout=1.5, step=0.05) -> bool:
 # --------------------------------------------------- registration + real press
 print("\n[registration and a real simulated key-press]")
 fire_count = [0]
-listener = hotkey.HotkeyListener(on_pressed=lambda: fire_count.__setitem__(0, fire_count[0] + 1))
+listener = hotkey.HotkeyListener(
+    on_pressed=lambda: fire_count.__setitem__(0, fire_count[0] + 1),
+    shortcut="ctrl_alt_p",
+)
 listener.start()
 
 check("hotkey registers successfully", wait_until(lambda: listener.registered))
@@ -85,13 +88,23 @@ press_ctrl_alt_p()
 check("a second distinct press fires exactly once more, not a burst",
       wait_until(lambda: fire_count[0] == 2), f"(count now {fire_count[0]})")
 
+# ------------------------------------------------------ automatic fallback
+print("\n[automatic fallback]")
+fallback = hotkey.HotkeyListener(on_pressed=lambda: None, shortcut="auto")
+fallback.start()
+check("automatic mode registers its fallback when Ctrl+Alt+P is occupied",
+      wait_until(lambda: fallback.registered), f"(got {fallback.display_name!r})")
+check("the automatic fallback is Ctrl+Alt+Shift+P",
+      fallback.display_name == "Ctrl+Alt+Shift+P", f"(got {fallback.display_name!r})")
+fallback.stop()
+
 # ------------------------------------------------------- conflict handling
-print("\n[a conflicting registration is handled gracefully]")
-second = hotkey.HotkeyListener(on_pressed=lambda: None)
+print("\n[a conflicting explicit shortcut is handled gracefully]")
+second = hotkey.HotkeyListener(on_pressed=lambda: None, shortcut="ctrl_alt_p")
 second.start()
 wait_until(lambda: second._thread_id is not None)
 time.sleep(0.3)  # let its _run() actually attempt RegisterHotKey and fail
-check("a second listener trying to claim the same combo fails, doesn't raise",
+check("an explicitly selected conflicting shortcut fails, doesn't raise",
       second.registered is False)
 second.stop()
 
@@ -128,7 +141,10 @@ bridge = _Bridge()
 # Exactly main.py's own wiring: hotkey_pressed -> handle_button("ps"), which
 # already opens if closed and closes if open — no separate logic needed.
 bridge.hotkey_pressed.connect(lambda: overlay.handle_button("ps"))
-app_listener = hotkey.HotkeyListener(on_pressed=bridge.hotkey_pressed.emit)
+app_listener = hotkey.HotkeyListener(
+    on_pressed=bridge.hotkey_pressed.emit,
+    shortcut="ctrl_alt_p",
+)
 app_listener.start()
 
 

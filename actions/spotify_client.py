@@ -308,9 +308,15 @@ def set_liked(track_id: str, liked: bool) -> None:
         _call(client.current_user_saved_tracks_delete, [track_id])
 
 
-def get_liked_songs(limit: int = 20):
-    result = _call(get_client().current_user_saved_tracks, limit=limit)
-    return [item["track"] for item in result["items"]]
+def get_liked_songs_page(limit: int = 20, offset: int = 0) -> tuple[list, int]:
+    """One page of Liked Songs and Spotify's total count for the collection."""
+    result = _call(get_client().current_user_saved_tracks, limit=limit, offset=offset)
+    tracks = []
+    for item in result.get("items", []):
+        track = item.get("track") if isinstance(item, dict) else None
+        if isinstance(track, dict):
+            tracks.append(track)
+    return tracks, int(result.get("total", offset + len(tracks)))
 
 
 def get_liked_songs_total() -> int:
@@ -319,13 +325,17 @@ def get_liked_songs_total() -> int:
     return result.get("total", 0)
 
 
-def get_playlists(limit: int = 6):
-    result = _call(get_client().current_user_playlists, limit=limit)
-    return result["items"]
+def get_playlists_page(limit: int = 20, offset: int = 0) -> tuple[list, int]:
+    """One page of the user's playlists and Spotify's total count."""
+    result = _call(get_client().current_user_playlists, limit=limit, offset=offset)
+    playlists = [item for item in result.get("items", []) if isinstance(item, dict)]
+    return playlists, int(result.get("total", offset + len(playlists)))
 
 
-def get_playlist_tracks(playlist_id: str, limit: int = 20):
-    result = _call(get_client().playlist_items, playlist_id, limit=limit)
+def get_playlist_tracks_page(
+    playlist_id: str, limit: int = 20, offset: int = 0
+) -> tuple[list, int]:
+    result = _call(get_client().playlist_items, playlist_id, limit=limit, offset=offset)
     # Docs say each item has the track data under "track", but the real
     # response for this endpoint nests it under "item" instead, with
     # "track" left as a true/false type-discriminator (track vs. episode) —
@@ -334,13 +344,13 @@ def get_playlist_tracks(playlist_id: str, limit: int = 20):
     # dict) rather than just truthiness catches that discriminator so it
     # doesn't get mistaken for real track data.
     tracks = []
-    for entry in result["items"]:
+    for entry in result.get("items", []):
         track = entry.get("track")
         if not isinstance(track, dict):
             track = entry.get("item")
         if isinstance(track, dict):
             tracks.append(track)
-    return tracks
+    return tracks, int(result.get("total", offset + len(tracks)))
 
 
 def play_track(uri: str) -> None:

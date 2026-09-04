@@ -64,6 +64,22 @@ class RowList:
         if self.on_select:
             self.on_select(self.index, self.rows[self.index])
 
+    def reselect(self, index: int) -> None:
+        """Point the selection at an absolute row index, assuming whatever was
+        selected before is *gone* — the paged lists in Music append a page to
+        the RowList they're already showing and delete the "Load more" row
+        that was selected, so there's no previous row left to deselect (and
+        touching a deleted widget would raise). Rebuilding the RowList instead
+        would restyle every row, which is what made paging a long list get
+        slower with every page."""
+        if not self.rows:
+            return
+        self.index = max(0, min(len(self.rows) - 1, index))
+        row = self.rows[self.index]
+        row.set_selected(True)
+        if self.on_select:
+            self.on_select(self.index, row)
+
     def activate(self) -> None:
         if self.rows and self.on_activate:
             self.on_activate(self.index, self.rows[self.index])

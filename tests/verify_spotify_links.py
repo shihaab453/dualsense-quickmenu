@@ -131,8 +131,12 @@ def check_music_detail():
     print("\n[Music Detail view]")
     sp.get_current_playback = lambda: {"item": SPOTIFY_TRACK, "is_playing": True}
     sp.get_liked_songs_total = lambda: 1
-    sp.get_playlists = lambda limit=6: []
-    sp.get_liked_songs = lambda limit=20: [SPOTIFY_TRACK]
+    # The Music panel browses through the paged API (offset + total), so
+    # stub those rather than the single-shot wrappers — anything left
+    # unstubbed would reach the real network and break test hermeticity.
+    sp.get_playlists_page = lambda limit=20, offset=0: ([], 0)
+    sp.get_liked_songs_page = lambda limit=20, offset=0: ([SPOTIFY_TRACK], 1)
+    sp.get_playlist_tracks_page = lambda pid, limit=20, offset=0: ([], 0)
     sp.start_playback = lambda **kw: None
     sp.is_liked = lambda tid: False
 

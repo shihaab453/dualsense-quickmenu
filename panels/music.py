@@ -51,6 +51,7 @@ from panels.base import (
 log = logs.get(__name__)
 
 _REPEAT_CYCLE = ["off", "context", "track"]
+_PAGE_SIZE = 20
 
 _UNAVAILABLE_MESSAGES = {
     "no_device": "Open Spotify on this PC or phone to enable playback control.",
@@ -104,6 +105,33 @@ class _LibraryRow(QFrame):
         subtitle_label = QLabel(subtitle)
         subtitle_label.setStyleSheet("font-size: 13px; color: rgba(255,255,255,0.4);")
         lay.addWidget(subtitle_label)
+        self.set_selected(False)
+
+    def set_selected(self, selected: bool) -> None:
+        self.setStyleSheet(_row_style(selected))
+
+
+def _load_more_label(noun: str, failed: bool) -> str:
+    """The Load More row's text — pressing it again after a failed page is
+    the retry, so the row says what happened instead of silently no-op'ing."""
+    if failed:
+        return f"Couldn't load more {noun} · press to retry"
+    return f"Load more {noun}"
+
+
+class _LoadMoreRow(QFrame):
+    """A controller-selectable continuation row at the end of a paged list."""
+
+    def __init__(self, label: str, failed: bool = False):
+        super().__init__()
+        self.setObjectName("row")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(16, 12, 16, 12)
+        text = QLabel(label)
+        color = "rgba(255,255,255,0.5)" if failed else "#3ddc97"
+        text.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {color};")
+        lay.addWidget(text)
+        lay.addStretch(1)
         self.set_selected(False)
 
     def set_selected(self, selected: bool) -> None:
@@ -229,6 +257,14 @@ class MusicPanel(Panel):
         self._detail_status_pending = ""
         self._current_track_id = None
         self._current_playlist_name = "Liked Songs"
+        self._liked_songs_total = 0
+        self._library_playlists = []
+        self._library_total = 0
+        self._song_tracks = []
+        self._song_total = 0
+        self._library_load_failed = False
+        self._song_load_failed = False
+        self._current_playlist_id = None
 
     # ---- view construction ----
 
@@ -463,37 +499,50 @@ class MusicPanel(Panel):
     # ---- library ----
 
     def _build_library_nav(self) -> RowList:
-        clear_layout(self._library_rows_container)
-        self._library_rows = []
-
         try:
             total = sp.get_liked_songs_total()
         except Exception:
             log.exception("Couldn't read the Liked Songs count")
             total = 0
-        liked_row = _LibraryRow("Liked Songs", f"Playlist · {total} songs", playlist_id=None)
-        self._library_rows.append(liked_row)
-        self._library_rows_container.addWidget(liked_row)
+        self._liked_songs_total = total
+        self._library_playlists = []
+        self._library_total = 0
+        self._library_load_failed = False
+        self._load_library_page()
+        return self._render_library_nav()
 
+    def _load_library_page(self) -> None:
         try:
-            playlists = sp.get_playlists(limit=6)
+            playlists, total = sp.get_playlists_page(
+                limit=_PAGE_SIZE, offset=len(self._library_playlists)
+            )
         except Exception:
+            # Keep the pages already loaded — a failed continuation must
+            # never wipe out playlists the user can still browse. The Load
+            # More row says so and stays pressable to retry.
             log.exception("Couldn't fetch the user's playlists")
-            playlists = []
-        for pl in playlists:
-            name = pl.get("name", "Playlist")
-            # Spotify's own docs call this field "tracks", but the actual
-            # API response uses "items" — checking both in case that
-            # differs by account or API version.
-            tracks_info = pl.get("tracks") or pl.get("items") or {}
-            count = tracks_info.get("total", 0)
-            row = _LibraryRow(name, f"{count} songs", playlist_id=pl.get("id"))
-            self._library_rows.append(row)
-            self._library_rows_container.addWidget(row)
+            self._library_load_failed = True
+            return
+        self._library_load_failed = False
+        self._library_playlists.extend(playlists)
+        # An empty page while `total` still claims there's more would leave
+        # a Load More row that can never load anything — trust what actually
+        # came back over the count.
+        self._library_total = total if playlists else len(self._library_playlists)
 
-        fit_scroll_to_content(self._library_scroll)
+    def _render_library_nav(self) -> RowList:
+        clear_layout(self._library_rows_container)
+        liked_row = _LibraryRow(
+            "Liked Songs", f"Playlist · {self._liked_songs_total} songs", playlist_id=None
+        )
+        self._library_rows = [liked_row]
+        self._library_rows_container.addWidget(liked_row)
+        self._add_library_rows(0)
 
         def on_activate(index, row):
+            if isinstance(row, _LoadMoreRow):
+                self._page_in_more_playlists()
+                return
             self._open_songs_view(row.playlist_id, row.playlist_name)
 
         return RowList(
@@ -504,37 +553,143 @@ class MusicPanel(Panel):
             on_enter=self._show_library,
         )
 
+    def _add_library_rows(self, rendered: int) -> None:
+        """Add the playlists from `rendered` onward, then a Load More row if
+        the library still has pages left."""
+        for pl in self._library_playlists[rendered:]:
+            name = pl.get("name", "Playlist")
+            # Spotify's own docs call this field "tracks", but the actual
+            # API response uses "items" — checking both in case that
+            # differs by account or API version.
+            tracks_info = pl.get("tracks") or pl.get("items") or {}
+            count = tracks_info.get("total", 0)
+            row = _LibraryRow(name, f"{count} songs", playlist_id=pl.get("id"))
+            self._library_rows.append(row)
+            self._library_rows_container.addWidget(row)
+
+        if len(self._library_playlists) < self._library_total:
+            more_row = _LoadMoreRow(
+                _load_more_label("playlists", self._library_load_failed),
+                self._library_load_failed,
+            )
+            self._library_rows.append(more_row)
+            self._library_rows_container.addWidget(more_row)
+
+        fit_scroll_to_content(self._library_scroll)
+
+    def _page_in_more_playlists(self) -> None:
+        rendered = len(self._library_playlists)
+        self._load_library_page()
+        selected = self._drop_selected_load_more(
+            self._library_rows, self._library_rows_container
+        )
+        self._add_library_rows(rendered)
+        self.nav.current().reselect(selected)
+
     def _open_songs_view(self, playlist_id, playlist_name: str) -> None:
         self._current_playlist_name = playlist_name
+        self._current_playlist_id = playlist_id
         self._songs_header.setText(playlist_name)
-        clear_layout(self._songs_rows_container)
+        self._song_tracks = []
         self._song_rows = []
+        self._song_total = 0
+        self._song_load_failed = False
+        self._load_songs_page()
+        self._push_songs_nav()
+
+    def _load_songs_page(self) -> None:
+        offset = len(self._song_tracks)
         try:
-            if playlist_id is None:
-                tracks = sp.get_liked_songs(limit=20)
+            if self._current_playlist_id is None:
+                tracks, total = sp.get_liked_songs_page(limit=_PAGE_SIZE, offset=offset)
             else:
-                tracks = sp.get_playlist_tracks(playlist_id, limit=20)
+                tracks, total = sp.get_playlist_tracks_page(
+                    self._current_playlist_id, limit=_PAGE_SIZE, offset=offset
+                )
         except Exception:
             # The most likely cause of a mysteriously empty song list, and
             # historically a response-shape mismatch rather than a network
-            # problem — see HANDOFF.md gotcha #7.
-            log.exception("Couldn't fetch tracks for playlist %r", playlist_id)
-            tracks = []
-        for track in tracks:
+            # problem — see HANDOFF.md gotcha #7. Keep the rows already
+            # loaded so a failed later page never erases music the user can
+            # still browse.
+            log.exception("Couldn't fetch tracks for playlist %r", self._current_playlist_id)
+            self._song_load_failed = True
+            return
+        self._song_load_failed = False
+        self._song_tracks.extend(tracks)
+        # See _load_library_page for why an empty page overrides `total`.
+        self._song_total = total if tracks else len(self._song_tracks)
+
+    def _push_songs_nav(self) -> None:
+        clear_layout(self._songs_rows_container)
+        self._song_rows = []
+        self._add_song_rows(0)
+
+        def on_activate(index, row):
+            if isinstance(row, _LoadMoreRow):
+                self._page_in_more_songs()
+                return
+            self._on_song_activated(index, row)
+
+        self.nav.push(
+            RowList(
+                self._song_rows,
+                on_activate=on_activate,
+                on_select=lambda i, row: self._songs_scroll.ensureWidgetVisible(row),
+                orientation="vertical",
+                on_enter=self._show_songs,
+            )
+        )
+
+    def _add_song_rows(self, rendered: int) -> None:
+        """Add the tracks from `rendered` onward, then a Load More row if the
+        tracklist still has pages left."""
+        for track in self._song_tracks[rendered:]:
             row = _TrackRow(track)
             self._song_rows.append(row)
             self._songs_rows_container.addWidget(row)
 
+        if len(self._song_tracks) < self._song_total:
+            more_row = _LoadMoreRow(
+                _load_more_label("songs", self._song_load_failed),
+                self._song_load_failed,
+            )
+            self._song_rows.append(more_row)
+            self._songs_rows_container.addWidget(more_row)
+
         fit_scroll_to_content(self._songs_scroll)
 
-        row_list = RowList(
-            self._song_rows,
-            on_activate=self._on_song_activated,
-            on_select=lambda i, row: self._songs_scroll.ensureWidgetVisible(row),
-            orientation="vertical",
-            on_enter=self._show_songs,
+    def _page_in_more_songs(self) -> None:
+        rendered = len(self._song_tracks)
+        self._load_songs_page()
+        selected = self._drop_selected_load_more(
+            self._song_rows, self._songs_rows_container
         )
-        self.nav.push(row_list)
+        self._add_song_rows(rendered)
+        self.nav.current().reselect(selected)
+
+    def _drop_selected_load_more(self, rows, container) -> int:
+        """Take the pressed Load More row off the end of a paged list and
+        report the position it held, so the first row of the newly loaded page
+        can take over the selection.
+
+        A page is appended to the RowList already on screen rather than built
+        into a replacement one: rebuilding re-created and re-styled every row
+        each time, so each press cost more than the last (about a second of
+        frozen UI by the thousandth track) — exactly the size of library
+        paging exists to serve.
+        """
+        index = len(rows) - 1
+        if rows and isinstance(rows[-1], _LoadMoreRow):
+            row = rows.pop()
+            container.removeWidget(row)
+            # deleteLater() alone isn't enough: Qt only destroys the widget
+            # once control is back in the event loop, so until then the row
+            # carries on painting where it was and the first row of the new
+            # page renders on top of it. Unparenting hides it immediately.
+            row.setParent(None)
+            row.deleteLater()
+        return index
 
     def _on_song_activated(self, index, row) -> None:
         track = row.track

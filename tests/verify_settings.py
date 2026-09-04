@@ -176,7 +176,9 @@ def check_library_errors_logged():
     # Force one and confirm it now reaches the log file.
     sp.is_logged_in = lambda: True
     sp.get_liked_songs_total = lambda: (_ for _ in ()).throw(RuntimeError("boom: liked total"))
-    sp.get_playlists = lambda limit=6: (_ for _ in ()).throw(RuntimeError("boom: playlists"))
+    sp.get_playlists_page = lambda limit=20, offset=0: (_ for _ in ()).throw(
+        RuntimeError("boom: playlists")
+    )
     open_music()
     QTimer.singleShot(150, after_library_errors)
 

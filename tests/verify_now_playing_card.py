@@ -17,6 +17,8 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import settings
 
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_nowplaying_")
@@ -28,17 +30,6 @@ from workers import Loader
 # This test supplies fake playback data. Keep the corresponding album-art
 # requests local too, leaving the panel's placeholder in place.
 album_art.get = lambda _url, _size, _radius, callback: callback(None)
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 # ------------------------------------------------- resolve_context_name unit
 print("\n[resolve_context_name]")
@@ -334,12 +325,4 @@ panel.build_nav()
 check("nothing playing anywhere says so",
       panel._song_label.text() == "Nothing playing", f"(got {panel._song_label.text()!r})")
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

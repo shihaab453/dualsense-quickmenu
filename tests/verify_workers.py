@@ -21,18 +21,11 @@ import time
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 from PySide6.QtCore import QCoreApplication, QEventLoop
 
 from workers import Loader, Worker
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    print(f"  {'PASS' if condition else 'FAIL'}  {label}{'  ' + detail if detail else ''}")
-    if not condition:
-        failures.append(label)
-
 
 app = QCoreApplication(sys.argv)
 MAIN_THREAD = threading.get_ident()
@@ -123,10 +116,4 @@ gate.set()
 check("only the newest queued job actually ran",
       pump(lambda: ran == [2], timeout=3.0), f"(got {ran})")
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S): " + ", ".join(failures))
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

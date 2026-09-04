@@ -18,6 +18,8 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import settings
 
 _TMP = tempfile.mkdtemp(prefix="dsqm_diag_")
@@ -29,17 +31,6 @@ logs.setup()
 
 import diagnostics
 import version
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 CLIENT_ID = "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
 settings.set_spotify_client_id(CLIENT_ID)
@@ -135,12 +126,4 @@ check("says so when there are no problems",
       "No warnings or errors logged." in diagnostics.report())
 logs.log_path = _real_log_path
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

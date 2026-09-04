@@ -16,23 +16,14 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from _harness import check, finish
+
 import settings
 
 _TMP = tempfile.mkdtemp(prefix="dsqm_logverify_")
 settings.data_dir = lambda: _TMP
 
 import logs
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 def log_text() -> str:
     with open(logs.log_path(), "r", encoding="utf-8") as f:
@@ -245,12 +236,4 @@ check("rotating handler is capped", any(
     getattr(h, "maxBytes", 0) > 0 for h in logging.getLogger().handlers
 ))
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

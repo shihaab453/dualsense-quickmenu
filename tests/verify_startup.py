@@ -15,6 +15,8 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import settings
 
 _TMP = tempfile.mkdtemp(prefix="dsqm_startup_")
@@ -22,17 +24,6 @@ settings.data_dir = lambda: _TMP
 
 import single_instance
 import version
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 # ------------------------------------------------------------------- version
 print("\n[version]")
@@ -127,12 +118,4 @@ check("the lock is per-session, not permanent on disk",
       "LOCKED" in probe.stdout,
       "(a stale lock file would show FREE here since we hold the mutex)")
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

@@ -16,18 +16,9 @@ import winreg
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import startup
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 def raw_read(name):
     try:
@@ -102,12 +93,4 @@ check("real Run entry is unchanged", raw_read(REAL_NAME) == real_before,
       f"(before={real_before!r} after={raw_read(REAL_NAME)!r})")
 check("the test value cleaned itself up", raw_read(TEST_NAME) is None)
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

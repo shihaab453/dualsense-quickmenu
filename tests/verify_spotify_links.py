@@ -22,6 +22,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from _harness import check, finish
+
 import settings
 
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_links_")
@@ -58,15 +60,6 @@ opened = []
 QDesktopServices.openUrl = lambda url: (opened.append(url.toString()), True)[1]
 
 from overlay import OverlayWindow
-
-failures = []
-
-
-def check(label, ok, detail=""):
-    print(f"  {'PASS' if ok else 'FAIL'}  {label}{'  ' + detail if detail else ''}")
-    if not ok:
-        failures.append(label)
-
 
 app = QApplication(sys.argv)
 overlay = OverlayWindow(get_battery=lambda: 88)
@@ -173,17 +166,7 @@ def after_detail():
     panel._open_current_in_spotify()
     check("opens the track's spotify: URI", opened[:1] == [SPOTIFY_TRACK["uri"]],
           f"(opened={opened})")
-    finish()
-
-
-def finish():
-    print("\n" + "=" * 60)
-    if failures:
-        print(f"{len(failures)} FAILURE(S): " + ", ".join(failures))
-    else:
-        print("All checks passed.")
-    print("=" * 60)
-    app.exit(1 if failures else 0)
+    finish(app)
 
 
 QTimer.singleShot(300, open_now_playing)

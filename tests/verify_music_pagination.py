@@ -22,6 +22,8 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import settings
 
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_paging_")
@@ -51,15 +53,6 @@ from PySide6.QtWidgets import QApplication, QLabel
 
 import panels.music as music
 from nav import NavStack
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    print(f"  {'PASS' if condition else 'FAIL'}  {label}{'  ' + detail if detail else ''}")
-    if not condition:
-        failures.append(label)
-
 
 def track(n):
     return {
@@ -262,10 +255,4 @@ check("a reopened tracklist is back to one page",
 check("the refetch started at offset 0", liked.calls[-1] == (2, 0),
       f"(got {liked.calls[-1]})")
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S): " + ", ".join(failures))
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

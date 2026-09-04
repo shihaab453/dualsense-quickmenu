@@ -9,6 +9,8 @@ import sys
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
@@ -24,13 +26,6 @@ power.restart = lambda: calls.append("restart")
 power_panel._HOLD_SECONDS = 0.04
 
 held = {"cross": False}
-failures = []
-
-
-def check(label, condition, detail=""):
-    print(f"  {'PASS' if condition else 'FAIL'}  {label}{'  ' + detail if detail else ''}")
-    if not condition:
-        failures.append(label)
 
 
 app = QApplication(sys.argv)
@@ -72,19 +67,7 @@ def after_restart():
     panel._run_action(panel._rows[2])
     check("a Windows action failure is shown", "access denied" in panel._status.text(),
           f"(got {panel._status.text()!r})")
-    finish()
-
-
-def finish():
-    print("\n" + "=" * 60)
-    if failures:
-        print(f"{len(failures)} FAILURE(S):")
-        for failure in failures:
-            print(f"  - {failure}")
-    else:
-        print("All checks passed.")
-    print("=" * 60)
-    app.exit(1 if failures else 0)
+    finish(app)
 
 
 QTimer.singleShot(100, after_shutdown)

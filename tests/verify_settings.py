@@ -20,6 +20,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from _harness import check, finish
+
 import settings
 
 _TMP = tempfile.mkdtemp(prefix="dsqm_verify_")
@@ -53,17 +55,6 @@ _power.restart = lambda: None
 # Routed into the temp dir by the data_dir patch above, so the last section can
 # check that panel failures really do reach the log file.
 logs.setup()
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 # ---------------------------------------------------------------- settings.py
 print("\n[settings store]")
@@ -270,19 +261,7 @@ def check_settings_window():
           f"(got {win._spotify_status.text()!r})")
 
     win.deleteLater()
-    finish()
-
-
-def finish():
-    print("\n" + "=" * 60)
-    if failures:
-        print(f"{len(failures)} FAILURE(S):")
-        for f in failures:
-            print(f"  - {f}")
-    else:
-        print("All checks passed.")
-    print("=" * 60)
-    app.exit(1 if failures else 0)
+    finish(app)
 
 
 QTimer.singleShot(200, open_music)

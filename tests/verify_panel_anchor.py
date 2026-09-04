@@ -23,6 +23,8 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import settings
 
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_anchor_")
@@ -31,17 +33,6 @@ from PySide6.QtWidgets import QApplication
 
 import overlay as overlay_module
 from overlay import OverlayWindow
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 app = QApplication(sys.argv)
 win = OverlayWindow(get_battery=lambda: 88)
@@ -131,12 +122,4 @@ check("center anchor still centers exactly", power.x() == expected_center_x,
 
 win.close_menu()
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

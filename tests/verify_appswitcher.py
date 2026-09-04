@@ -25,6 +25,8 @@ import time
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from _harness import check, finish
+
 import settings
 
 settings.data_dir = lambda: tempfile.mkdtemp(prefix="dsqm_appswitcher_test_")
@@ -35,17 +37,6 @@ from PySide6.QtWidgets import QApplication, QLabel
 from actions import window_switcher
 
 app = QApplication(sys.argv)
-
-failures = []
-
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
 
 # ------------------------------------------------------------ own-pid filter
 print("\n[own-process windows are excluded]")
@@ -284,12 +275,4 @@ check("both cards deselected once back at the tray",
 
 win.close_menu()
 
-print("\n" + "=" * 60)
-if failures:
-    print(f"{len(failures)} FAILURE(S):")
-    for f in failures:
-        print(f"  - {f}")
-else:
-    print("All checks passed.")
-print("=" * 60)
-sys.exit(1 if failures else 0)
+finish()

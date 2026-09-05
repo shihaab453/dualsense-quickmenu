@@ -148,8 +148,15 @@ class _VolumeRow(QFrame):
         try:
             percent = self._get_percent()
         except Exception:
-            log.exception("Couldn't read a volume level; showing 0%%")
-            percent = 0
+            # Showing 0% here was a lie that looked like a fact: a device that
+            # cannot be read renders identically to one turned all the way
+            # down, and the user reasonably concludes their volume is muted.
+            log.exception("Couldn't read a volume level")
+            self._bar.set_percent(0)
+            self._percent.setText("--")
+            self.setEnabled(False)
+            return
+        self.setEnabled(True)
         self._bar.set_percent(percent)
         self._percent.setText(f"{percent}%")
 
@@ -190,8 +197,13 @@ class _ToggleRow(QFrame):
         try:
             on = self._get_state()
         except Exception:
-            log.exception("Couldn't read a Sound toggle's state; assuming off")
-            on = False
+            # Same reasoning as the volume row: "off" and "cannot be read"
+            # must not look the same, or the user trusts a state the app
+            # never actually established.
+            log.exception("Couldn't read a Sound toggle's state")
+            self.setEnabled(False)
+            return
+        self.setEnabled(True)
         color = "#3ddc97" if on else "rgba(255,255,255,0.2)"
         self._switch.setStyleSheet(f"background: {color}; border-radius: 12px;")
 

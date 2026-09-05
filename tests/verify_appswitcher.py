@@ -275,4 +275,49 @@ check("both cards deselected once back at the tray",
 
 win.close_menu()
 
+print("\n[a long window list]")
+# Styling a row does not scroll it into view. With twenty windows open the
+# selection could move off the bottom of the viewport, leaving the highlight
+# invisible while Cross switched to a window the user could not see.
+MANY = [
+    {"hwnd": 1000 + n, "title": f"Window {n}", "pid": n, "process_name": "x.exe",
+     "icon_image": None}
+    for n in range(20)
+]
+appswitcher_module.window_switcher.list_switchable_windows = lambda: list(MANY)
+panel = appswitcher_module.AppSwitcherPanel()
+panel._loader = Loader(lambda job: held_jobs.append(job), "test")
+nav = panel.build_nav()
+run_jobs()
+panel.resize(860, 400)
+panel.show()
+app.processEvents()
+for _ in range(19):
+    nav.move(1)
+app.processEvents()
+selected = nav.selected_row()
+check("selection reached the last window", selected.window["title"] == "Window 19",
+      f"(got {selected.window['title']!r})")
+viewport = panel._scroll.viewport()
+top_left = selected.mapTo(viewport, selected.rect().topLeft())
+check("and it was scrolled into view",
+      0 <= top_left.y() <= viewport.height(),
+      f"(row y={top_left.y()}, viewport height={viewport.height()})")
+panel.hide()
+
+print("\n[a switch that fails]")
+# The window can close between the list being built and Cross being pressed.
+# Closing the overlay and silently doing nothing is the one outcome worth
+# avoiding, since it looks identical to the app being broken.
+appswitcher_module.window_switcher.switch_to = lambda hwnd: False
+panel._on_activate(0, panel._rows[0])
+run_jobs()
+labels = [
+    panel._rows_container.itemAt(i).widget()
+    for i in range(panel._rows_container.count())
+]
+text = " ".join(w.text() for w in labels if isinstance(w, QLabel))
+check("a failed switch is reported rather than silently swallowed",
+      "Couldn't switch to" in text, f"(got {text!r})")
+
 finish()

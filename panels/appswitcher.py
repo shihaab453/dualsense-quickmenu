@@ -72,6 +72,7 @@ class AppSwitcherPanel(Panel):
         self._rows = []
         self._windows = None
         self._nav = None
+        self._failed_switch = ""
         # Its own worker rather than the Spotify one: enumerating windows has
         # nothing to do with Spotify, and opening the switcher shouldn't queue
         # up behind whatever the Music panel last asked for. Enumeration is
@@ -82,7 +83,14 @@ class AppSwitcherPanel(Panel):
 
     def build_nav(self):
         self._nav = RowList(
-            [], on_activate=self._on_activate, orientation="vertical"
+            [],
+            on_activate=self._on_activate,
+            # Without this the selection can move off the bottom of the
+            # viewport: styling a row does not scroll it into view, so with
+            # twenty windows open the highlight was invisible and Cross
+            # switched to something the user could not see.
+            on_select=lambda i, row: self._scroll.ensureWidgetVisible(row),
+            orientation="vertical",
         )
         self._render()
         self._loader.start(window_switcher.list_switchable_windows, self._on_listed)
@@ -94,6 +102,14 @@ class AppSwitcherPanel(Panel):
             self._windows = self._windows or []
         else:
             self._windows = value
+        self._render()
+
+    def _report_failed_switch(self, title: str) -> None:
+        """Say so in the panel. The overlay is already closing by this point,
+        so this is what the user sees when they reopen it rather than a silent
+        no-op."""
+        self._windows = None
+        self._failed_switch = title
         self._render()
 
     def _render(self) -> None:
@@ -108,7 +124,15 @@ class AppSwitcherPanel(Panel):
         clear_layout(self._rows_container)
         self._rows = []
 
-        if self._windows is None:
+        if self._failed_switch:
+            self._rows_container.addWidget(
+                message_label(
+                    f"Couldn't switch to {self._failed_switch}. It may have "
+                    "closed. This list has been refreshed."
+                )
+            )
+            self._failed_switch = ""
+        elif self._windows is None:
             self._rows_container.addWidget(message_label("Loading…"))
         elif not self._windows:
             self._rows_container.addWidget(
@@ -142,4 +166,12 @@ class AppSwitcherPanel(Panel):
         close_menu = getattr(overlay, "close_menu", None)
         if callable(close_menu):
             close_menu()
-        window_switcher.switch_to(row.window["hwnd"])
+        if not window_switcher.switch_to(row.window["hwnd"]):
+            # The window can have closed since the list was built, or Windows
+            # can refuse the foreground change. Closing the overlay and
+            # leaving the user staring at whatever was already in front, with
+            # no explanation, is the one outcome worth avoiding.
+            log.warning(
+                "Couldn't bring %r to the front", row.window.get("title", "?")
+            )
+            self._report_failed_switch(row.window.get("title", "that window"))

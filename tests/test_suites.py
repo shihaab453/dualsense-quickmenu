@@ -31,6 +31,7 @@ _TESTS = Path(__file__).parent
 # normal desktop, but they will take focus for a moment while they run, and
 # they are the ones to exclude first on a machine where that matters.
 _NEEDS_REAL_WINDOWS = {
+    "verify_startup.py",       # creates a real named Windows mutex
     "verify_startup_registry.py",
     "verify_appswitcher.py",
     "verify_hotkey.py",

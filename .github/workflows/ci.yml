@@ -1,0 +1,93 @@
+# Clean-environment Windows CI: locked dependencies, the hermetic test
+# suite, a real PyInstaller build, and the packaged --selftest against both
+# the build output and a copy extracted from the zip elsewhere - see
+# tools/build.py, which is the one script this workflow runs and the same
+# one a developer runs locally (`.venv\Scripts\python.exe tools\build.py`).
+# Keeping that logic in one place means CI can't drift from what a local
+# release build actually does.
+#
+# What this deliberately does NOT run: the `windows`-marked pytest suites
+# (real global hotkey registration, real foreground-window switching) and
+# the `hardware`-marked ones (need a physical DualSense). GitHub's hosted
+# Windows runners don't reliably provide the interactive desktop session
+# those need, and treating a best-effort pass/fail from a non-interactive
+# runner as release evidence would be worse than being explicit that these
+# are a separate, manual acceptance step - run
+# `.venv\Scripts\python.exe -m pytest -m windows` (and, with a controller
+# plugged in, `--hardware`) on a real desktop before calling a build a
+# release. tools/build.py detects CI (the CI env var GitHub Actions sets)
+# and narrows to `-m unit` for exactly this reason; see its module comment.
+#
+# This does not produce a *reproducible* build - see tools/build.py's module
+# comment and the manifest's own "reproducibility_caveat" field for why not.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch: {}
+
+# A new push to the same branch/PR supersedes the run already in flight for
+# it - no point finishing a build for a commit that's no longer at the tip.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    # Backstop above tools/build.py's own 60s selftest timeout: this bounds
+    # the whole job (checkout, dependency install, the full test suite, and
+    # a real PyInstaller build), so a hang anywhere in that chain fails loudly
+    # within half an hour instead of running until GitHub's own 6-hour cap.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the project's actual dev/release runtime (see version.py
+          # and HANDOFF's Python-version note) - not the oldest version that
+          # happens to work.
+          python-version: '3.14'
+
+      # Keyed on the lock file's own content, not requirements*.txt: the lock
+      # file is what --require-hashes actually installs from, and its hash
+      # changing is precisely the condition under which the cache should miss.
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements-dev.lock.txt') }}
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements-dev.lock.txt
+
+      - name: Build, verify, and package
+        run: python tools\build.py
+
+      # Uploaded unconditionally (always()), because a build that fails
+      # partway still leaves test-evidence.xml behind, and that failure
+      # record is exactly what someone debugging a red CI run needs - a run
+      # that only uploads evidence for a successful build isn't evidence,
+      # it's a trophy case.
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-evidence-${{ github.sha }}
+          path: |
+            dist\*.zip
+            dist\*.manifest.json
+            dist\test-evidence.xml
+            dist\smoke-test-record.json
+          if-no-files-found: warn
+          retention-days: 30

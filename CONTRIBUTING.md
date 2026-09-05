@@ -27,14 +27,17 @@ You keep the copyright in your own contribution. You're confirming you wrote it
 
 ## Before you open a PR
 
-There's no CI, so please run the checks yourself:
+CI (`.github/workflows/ci.yml`) runs the hermetic test suite and a full
+packaged build on every push and PR, on a clean Windows runner with
+hash-pinned dependencies — but it only runs the `unit`-marked suites (see
+below for why), so please also run the checks yourself before opening a PR:
 
 ```bash
 .venv\Scripts\python.exe -m pytest
 ```
 
 That takes about half a minute and should end in `passed`. It needs the dev
-dependencies (`pip install -r requirements-dev.txt`).
+dependencies (`pip install --require-hashes -r requirements-dev.lock.txt`).
 
 Some of the checks use real Windows state - they write to the registry under a
 test-only name, briefly take foreground focus, and register a real global
@@ -49,6 +52,14 @@ A `skipped` result is not a failure. The hotkey checks skip themselves when
 something else on your machine already holds Ctrl+Alt+P, which is usually a
 copy of this app already running.
 
+This is also why CI only runs `-m unit`: GitHub's hosted Windows runners
+don't reliably provide the interactive desktop session that `windows`-marked
+checks need (real foreground-window switching, a real global hotkey
+registration), and a best-effort pass/fail from a non-interactive runner
+would be worse than being explicit that these stay a manual step. Run
+`pytest -m windows` yourself — and `--hardware` too, with a controller
+plugged in — before calling a build a release.
+
 Each group of checks is also a standalone script you can run directly, which
 is the quickest way to work on one:
 
@@ -62,8 +73,11 @@ If you changed anything that ends up in a build, also run:
 .venv\Scripts\python.exe tools\build.py
 ```
 
-which builds, runs the packaged app's `--selftest`, and refuses to package a
-build that fails it.
+which builds, runs the packaged app's `--selftest` (against the build output
+and again against a copy extracted elsewhere), and refuses to package a
+build that fails either. It writes a versioned zip plus a manifest and test/
+smoke evidence next to it — the same files CI uploads as artifacts on every
+run — under `dist\`.
 
 **Read [HANDOFF.md](HANDOFF.md) first if you're touching layout code.** It
 documents the specific Qt and Spotify API behaviours that have each cost real

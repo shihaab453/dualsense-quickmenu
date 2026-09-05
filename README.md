@@ -90,9 +90,11 @@ Then follow **Spotify setup** below.
 
 1. Install dependencies (one time):
    ```
-   .venv\Scripts\python.exe -m pip install -r requirements.txt
+   .venv\Scripts\python.exe -m pip install --require-hashes -r requirements.lock.txt
    ```
-   (If `.venv` doesn't exist yet: `py -m venv .venv` first.)
+   (If `.venv` doesn't exist yet: `py -m venv .venv` first.) `requirements.lock.txt`
+   pins every dependency, direct and transitive, by hash — see its own header
+   for why and how to regenerate it after changing `requirements.txt`.
 2. Plug in the DualSense with a **USB cable** (Bluetooth not supported yet).
 3. Run it:
    ```
@@ -118,15 +120,26 @@ start automatically when you log in.
 ### Building the distributable yourself
 
 ```
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock.txt
 .venv\Scripts\python.exe tools\build.py
 ```
 
-That runs PyInstaller, then runs the built exe's `--selftest`, and only zips
-it into `dist\DualSenseQuickMenu-windows.zip` if every check passes. The
-selftest step isn't skippable on purpose: the ways a packaged build of this
+That runs the test suite, then PyInstaller, then the built exe's `--selftest`
+— and only then zips it, as `dist\DualSenseQuickMenu-<version>-<commit>.zip`
+(`-dirty` appended if your working tree has uncommitted changes). Neither
+verification step is skippable on purpose: the ways a packaged build of this
 app breaks are all silent (blank icons, wrong font, dead PS button), so "it
-built" on its own doesn't tell you much.
+built" on its own doesn't tell you much. It then unzips its own output
+somewhere else and runs `--selftest` again against *that* copy — a packaging
+bug that only shows up once the build is no longer sitting next to the
+source tree it came from won't pass just because the first check did.
+
+Alongside the zip you'll find a `.manifest.json` (source commit, dependency
+lock hash, a SHA-256 of every file in the build, and the known limitations
+of what was checked) and, in `dist\`, `test-evidence.xml` and
+`smoke-test-record.json` — the same evidence CI uploads for every run. None
+of this makes the build *reproducible*; see the manifest's own
+`reproducibility_caveat` field for why not.
 
 ## Spotify setup
 

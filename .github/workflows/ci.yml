@@ -91,3 +91,54 @@ jobs:
             dist\smoke-test-record.json
           if-no-files-found: warn
           retention-days: 30
+
+  # The same hermetic suites again, on Qt's offscreen platform plugin.
+  #
+  # Not redundant with the job above, which runs them on the runner's real
+  # desktop session. The default font is a property of the platform plugin, so
+  # anything measured with QFontMetrics - text elision, a size hint, a
+  # fit-to-content height - can differ between the two, and an assertion that
+  # depends on one of those passes on a desktop and fails headless (or the
+  # reverse) on code that is behaving perfectly. That is exactly what happened
+  # to verify_now_playing_card, which compared a label's text to a string the
+  # card had already truncated: green on every desktop, three failures
+  # offscreen, and nothing wrong with the card. See HANDOFF's Testing pattern
+  # section.
+  #
+  # Deliberately does not run tools\build.py: a second PyInstaller build would
+  # cost minutes to re-prove what the first job already proved. This job is
+  # about the assertions, not the artifact, so it installs and runs pytest
+  # directly. That is also why it is a separate job rather than another step -
+  # it can fail while the build evidence above is still produced and uploaded.
+  headless-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    env:
+      # Qt renders into an offscreen surface instead of the desktop. No window
+      # is ever mapped, which is the point.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements-dev.lock.txt') }}
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements-dev.lock.txt
+
+      # `unit` only, matching what tools\build.py narrows to under CI: the
+      # windows- and hardware-marked suites need a real interactive session and
+      # a plugged-in controller, so running them here would be worse than not
+      # running them - see the note at the top of this file.
+      - name: Run the hermetic suites headless
+        run: python -m pytest -m unit -rs

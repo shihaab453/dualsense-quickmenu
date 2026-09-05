@@ -412,7 +412,9 @@ class SettingsWindow(QDialog):
         else:
             state = "Client ID saved, but not logged in yet. Open the Music panel to log in."
 
-        self._logout_button.setEnabled(bool(client_id) and logged_in)
+        # Disconnect must remain available for an expired or malformed token.
+        # It also clears in-memory account data and cancels stale work.
+        self._logout_button.setEnabled(bool(client_id))
         self._spotify_status.setText(
             f"{saved_message} {state}".strip() if saved_message else state
         )

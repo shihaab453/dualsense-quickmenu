@@ -221,6 +221,20 @@ check("a second refresh() while one is in flight is a no-op",
       call_count[0] == 1, f"(calls={call_count[0]})")
 card._refreshing = False
 
+print("\n  -- logout rejects a queued old-session result --")
+late_callbacks = []
+sp.get_now_playing_summary_async = late_callbacks.append
+card.refresh()
+check("sanity: an old-session card result is pending", len(late_callbacks) == 1)
+sp.forget_login()
+late_callbacks[0](dict(summary))
+app.processEvents()
+check("logout clears the card immediately",
+      card._title_label.text() == "Nothing playing")
+check("the queued result cannot repaint old account data",
+      card._caption_label.text() == "Spotify"
+      and card._title_label.text() != summary["title"])
+
 print("\n  -- empty state --")
 sp.get_now_playing_summary_async = lambda on_done: on_done(None)
 card.refresh()
@@ -282,37 +296,50 @@ class HeldSubmit:
             job()
 
 
-held = HeldSubmit()
-sp.submit = held
+spotify_held = HeldSubmit()
+winrt_held = HeldSubmit()
+sp.submit = spotify_held
 sp.is_logged_in = lambda: True
 
 from panels.nowplaying import NowPlayingPanel
 from actions import now_playing as _now_playing
 
 panel = NowPlayingPanel()
-panel._loader = Loader(held, "test")
+panel._spotify_loader = Loader(spotify_held, "test/spotify")
+panel._winrt_loader = Loader(winrt_held, "test/winrt")
 
 PANEL_TRACK = {"id": "t1", "name": "Panel Song",
                "artists": [{"name": "Panel Artist"}], "album": {"images": []}}
 sp.get_current_playback = lambda: {"is_playing": True, "item": PANEL_TRACK}
+_now_playing.get = lambda: {"title": "Fast fallback", "artist": "Windows"}
 
-held.defer = True
+spotify_held.defer = True
+winrt_held.defer = True
 nav = panel.build_nav()
 check("the panel opens before either lookup answers",
       panel._song_label.text() == "Loading…", f"(got {panel._song_label.text()!r})")
 check("with nothing selectable yet", nav.rows == [], f"(got {nav.rows})")
-held.run_all()
+winrt_held.run_all()
+check("WinRT can answer while Spotify is still pending",
+      "Fast fallback" in panel._song_label.text(),
+      f"(got {panel._song_label.text()!r})")
+spotify_held.run_all()
 check("the track appears once the lookup lands",
       "Panel Song" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
+check("Spotify replaces an earlier WinRT fallback",
+      panel.heading.text() == "Now playing on Spotify")
 check("and the open-in-Spotify row comes with it", nav.rows == [panel._open_row],
       f"(got {nav.rows})")
 
-held.defer = True
+spotify_held.defer = True
+winrt_held.defer = True
 nav = panel.build_nav()
 check("reopening shows the last answer rather than blanking",
       "Panel Song" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
-held.run_all()
-held.defer = False
+winrt_held.run_all()
+spotify_held.run_all()
+spotify_held.defer = False
+winrt_held.defer = False
 
 # Nothing on Spotify: the panel falls back to whatever Windows reports, and
 # must not claim that came from Spotify.
@@ -330,5 +357,17 @@ _now_playing.get = lambda: None
 panel.build_nav()
 check("nothing playing anywhere says so",
       panel._song_label.text() == "Nothing playing", f"(got {panel._song_label.text()!r})")
+
+print("\n[logout clears the Now Playing panel cache]")
+sp.get_current_playback = lambda: {"is_playing": True, "item": PANEL_TRACK}
+panel.build_nav()
+check("sanity: Spotify metadata is cached before logout",
+      panel._last_result is not None and panel._current_track is PANEL_TRACK)
+sp.forget_login()
+check("the cached Spotify result is cleared",
+      panel._last_result is None and panel._current_track is None)
+check("the Spotify action is removed", panel._nav.rows == [])
+check("the panel no longer displays the old track",
+      panel._song_label.text() == "Nothing playing")
 
 finish()

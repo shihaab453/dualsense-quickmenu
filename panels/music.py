@@ -274,6 +274,7 @@ class MusicPanel(Panel):
         self._login_bridge = _LoginSignal()
         self._login_bridge.finished.connect(self._on_login_finished)
         self._logging_in = False
+        self._login_attempt = None
         self._pending_track = None
         self._detail_status_pending = ""
         self._current_track_id = None
@@ -323,6 +324,7 @@ class MusicPanel(Panel):
         # library into a login prompt), so it is looked up rather than baked
         # into the RowList.
         self._root_mode = "library"
+        sp.register_session_reset(self._reset_spotify_session)
 
     # ---- view construction ----
 
@@ -539,6 +541,66 @@ class MusicPanel(Panel):
 
     # ---- setup / login ----
 
+    def _reset_spotify_session(self) -> None:
+        """Cancel old-account work and erase every account-derived UI value."""
+        self._library_loader.cancel()
+        self._songs_loader.cancel()
+        self._detail_loader.cancel()
+        self._commands.cancel_all()
+        if self._login_attempt is not None:
+            self._login_attempt.cancel()
+        self._logging_in = False
+        self._login_attempt = None
+        self._login_row.set_text("Log in with Spotify")
+
+        self._pending_track = None
+        self._current_track_id = None
+        self._current_playlist_id = None
+        self._current_playlist_name = "Liked Songs"
+        self._songs_cache_id = _NO_PLAYLIST
+        self._liked_songs_total = 0
+        self._library_playlists = []
+        self._library_total = 0
+        self._library_offset = 0
+        self._library_loaded = False
+        self._library_load_failed = False
+        self._library_paging = False
+        self._song_tracks = []
+        self._song_total = 0
+        self._song_offset = 0
+        self._songs_loaded = False
+        self._song_load_failed = False
+        self._songs_paging = False
+
+        if self._library_nav is not None:
+            self._library_nav.replace_rows([])
+        if self._songs_nav is not None:
+            self._songs_nav.replace_rows([])
+        clear_layout(self._library_rows_container)
+        clear_layout(self._songs_rows_container)
+        self._library_rows = []
+        self._song_rows = []
+
+        self._songs_header.setText("Liked Songs")
+        self._detail_back_label.setText("‹ Liked Songs")
+        self._detail_title.clear()
+        self._detail_artist.clear()
+        self._detail_status.clear()
+        self._detail_explicit_badge.hide()
+        self._detail_art.clear()
+        self._like_tile.set_icon_name("like_outline")
+        self._like_tile.set_active(False)
+        self._shuffle_tile.set_active(False)
+        self._playpause_tile.set_icon_name("play")
+        self._repeat_tile.set_icon_name("repeat")
+        self._repeat_tile.set_active(False)
+
+        self._root_mode = "logged_out" if sp.is_configured() else "setup"
+        if self._root_mode == "logged_out":
+            self._show_logged_out()
+        else:
+            self._show_setup()
+
     def _open_settings(self) -> None:
         # The overlay is frameless, always-on-top and deliberately holds the
         # foreground (see overlay._force_foreground), so a normal window shown
@@ -552,21 +614,23 @@ class MusicPanel(Panel):
 
     def _start_login(self) -> None:
         if self._logging_in:
-            # An attempt is already waiting on the browser. Say so rather than
-            # appearing to ignore the press - spotipy's local callback server
-            # has no deadline of its own, so an abandoned browser tab leaves
-            # this pending, and the user pressing again deserves an answer.
-            self._status_label.setText(
-                "Still waiting for the Spotify login page. Finish it in your "
-                "browser, or restart the app if you closed it."
-            )
+            if self._login_attempt is not None and self._login_attempt.cancel():
+                self._status_label.setText("Cancelling Spotify login...")
             return
         self._logging_in = True
-        self._status_label.setText("Opening your browser to log in to Spotify…")
-        sp.login_async(lambda ok, err: self._login_bridge.finished.emit(ok, err or ""))
+        self._login_row.set_text("Cancel Spotify login")
+        self._status_label.setText(
+            "Opening your browser to log in to Spotify. "
+            "Press Cross again to cancel."
+        )
+        self._login_attempt = sp.login_async(
+            lambda ok, err: self._login_bridge.finished.emit(ok, err or "")
+        )
 
     def _on_login_finished(self, ok: bool, err: str) -> None:
         self._logging_in = False
+        self._login_attempt = None
+        self._login_row.set_text("Log in with Spotify")
         if ok:
             self._status_label.setText("Logged in! Press Circle, then reopen Music.")
         else:

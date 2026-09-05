@@ -23,15 +23,81 @@
 import os
 import queue
 import threading
+import time
+import weakref
 
 import spotipy
-from spotipy.exceptions import SpotifyException
-from spotipy.oauth2 import SpotifyPKCE
+from spotipy.cache_handler import CacheFileHandler, CacheHandler
+from spotipy.exceptions import SpotifyException, SpotifyOauthError, SpotifyStateError
+from spotipy.oauth2 import SpotifyPKCE, start_local_http_server
 
 import logs
 import settings
 
 log = logs.get(__name__)
+
+
+class SessionEnded(Exception):
+    """Work belongs to a Spotify session that has since been disconnected."""
+
+
+_session_lock = threading.RLock()
+_session_generation = 0
+_token_blocked = False
+_job_session = threading.local()
+_session_reset_listeners = []
+_active_login_lock = threading.Lock()
+_active_login = None
+
+
+def session_generation() -> int:
+    with _session_lock:
+        return _session_generation
+
+
+def is_session_current(generation: int) -> bool:
+    with _session_lock:
+        return generation == _session_generation
+
+
+def _context_session_generation() -> int:
+    generation = getattr(_job_session, "generation", None)
+    return session_generation() if generation is None else generation
+
+
+def _assert_current_session(generation: int | None = None) -> int:
+    generation = (
+        _context_session_generation() if generation is None else generation
+    )
+    if not is_session_current(generation):
+        raise SessionEnded("Spotify disconnected while this work was in flight")
+    return generation
+
+
+def register_session_reset(callback) -> None:
+    """Call a live UI object's bound method whenever Spotify disconnects."""
+    try:
+        reference = weakref.WeakMethod(callback)
+    except TypeError:
+        reference = weakref.ref(callback)
+    with _session_lock:
+        _session_reset_listeners.append(reference)
+
+
+def _notify_session_reset() -> None:
+    with _session_lock:
+        references = list(_session_reset_listeners)
+        _session_reset_listeners.clear()
+    for reference in references:
+        callback = reference()
+        if callback is None:
+            continue
+        with _session_lock:
+            _session_reset_listeners.append(reference)
+        try:
+            callback()
+        except Exception:
+            log.exception("A Spotify session-reset callback raised")
 
 # Deliberately built here rather than imported from workers.py: that module
 # imports Qt, and this one stays Qt-free so the tests can exercise it headless.
@@ -58,7 +124,16 @@ def submit(job) -> None:
     """Run job() on the one thread that owns the Spotify HTTP session. Jobs
     run in submission order; see the note at the top of this file for why
     they are not run in parallel."""
-    _jobs.put(job)
+    generation = session_generation()
+
+    def session_job():
+        _job_session.generation = generation
+        try:
+            job()
+        finally:
+            del _job_session.generation
+
+    _jobs.put(session_job)
 
 
 # The client ID is *not* baked in, deliberately. A Spotify app registered on
@@ -85,6 +160,145 @@ SCOPE = " ".join(
 )
 
 _client = None  # cached spotipy.Spotify instance, built lazily once logged in
+
+# The token exchange has its own shorter network timeout. This is the upper
+# bound for the interactive browser step, where the user may abandon the tab.
+_TOKEN_TIMEOUT_SECONDS = 10
+_LOGIN_TIMEOUT_SECONDS = 120
+_LOGIN_SERVER_POLL_SECONDS = 0.1
+
+
+class LoginCancelled(Exception):
+    """The current interactive Spotify login was cancelled by the user."""
+
+
+class LoginTimedOut(Exception):
+    """The interactive Spotify login did not finish before its deadline."""
+
+
+class LoginAttempt:
+    """Cancellation and completion state for one browser login attempt."""
+
+    def __init__(self, generation: int | None = None):
+        self._lock = threading.Lock()
+        self._cancelled = threading.Event()
+        self._done = threading.Event()
+        self.generation = (
+            session_generation() if generation is None else generation
+        )
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    @property
+    def done(self) -> bool:
+        return self._done.is_set()
+
+    def cancel(self) -> bool:
+        """Request cancellation. False means the attempt already finished."""
+        with self._lock:
+            if self.done:
+                return False
+            self._cancelled.set()
+            return True
+
+    def finish(self, commit=None) -> bool:
+        """Finish once, optionally committing a staged token.
+
+        The lock makes cancellation and token persistence one atomic decision.
+        A cancel that wins cannot leave a newly issued token on disk.
+        """
+        with self._lock:
+            if self.done:
+                return False
+            if commit is not None and not self.cancelled:
+                commit()
+            self._done.set()
+            return not self.cancelled
+
+
+class _StagedCacheHandler(CacheHandler):
+    """Keep login tokens in memory until the attempt finishes successfully."""
+
+    def __init__(self, cache_path: str, generation: int):
+        self._persistent = _SessionCacheHandler(cache_path, generation)
+        self._token = self._persistent.get_cached_token()
+
+    def get_cached_token(self):
+        return self._token
+
+    def save_token_to_cache(self, token_info):
+        self._token = token_info
+
+    def commit(self) -> None:
+        if self._token is not None:
+            self._persistent.save_token_to_cache(self._token)
+
+
+class _SessionCacheHandler(CacheHandler):
+    """Reject token reads and writes from work invalidated by logout."""
+
+    def __init__(self, cache_path: str, generation: int):
+        self._persistent = CacheFileHandler(cache_path=cache_path)
+        self._generation = generation
+
+    def get_cached_token(self):
+        with _session_lock:
+            _assert_current_session(self._generation)
+            if _token_blocked:
+                return None
+            return self._persistent.get_cached_token()
+
+    def save_token_to_cache(self, token_info):
+        global _token_blocked
+        with _session_lock:
+            _assert_current_session(self._generation)
+            self._persistent.save_token_to_cache(token_info)
+            _token_blocked = False
+
+
+class _CancellableSpotifyPKCE(SpotifyPKCE):
+    """Spotipy PKCE with a bounded, cancellable loopback-server wait."""
+
+    def __init__(
+        self,
+        *args,
+        login_attempt: LoginAttempt,
+        login_timeout: float,
+        **kwargs,
+    ):
+        self._login_attempt = login_attempt
+        self._login_timeout = login_timeout
+        super().__init__(*args, **kwargs)
+
+    def _get_auth_response_local_server(self, redirect_port):
+        server = start_local_http_server(redirect_port)
+        deadline = time.monotonic() + self._login_timeout
+        try:
+            self._open_auth_url()
+            while server.auth_code is None and server.error is None:
+                if self._login_attempt.cancelled:
+                    raise LoginCancelled()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LoginTimedOut()
+                server.timeout = min(_LOGIN_SERVER_POLL_SECONDS, remaining)
+                server.handle_request()
+
+            if self._login_attempt.cancelled:
+                raise LoginCancelled()
+            if self.state is not None and server.state != self.state:
+                raise SpotifyStateError(self.state, server.state)
+            if server.auth_code is not None:
+                return server.auth_code
+            if server.error is not None:
+                raise SpotifyOauthError(
+                    f"Received error from OAuth server: {server.error}"
+                )
+            raise SpotifyOauthError("Spotify login did not return an authorization code")
+        finally:
+            server.server_close()
 
 
 def _cache_path() -> str:
@@ -115,16 +329,37 @@ def is_configured() -> bool:
     return bool(settings.get_spotify_client_id())
 
 
-def _auth_manager() -> SpotifyPKCE:
+def _auth_manager(
+    *, login_attempt: LoginAttempt | None = None,
+    login_timeout: float = _LOGIN_TIMEOUT_SECONDS,
+) -> SpotifyPKCE:
     client_id = settings.get_spotify_client_id()
     if not client_id:
         raise NotConfigured("No Spotify client ID has been set up yet.")
     os.makedirs(settings.data_dir(), exist_ok=True)
-    return SpotifyPKCE(
+    generation = (
+        login_attempt.generation
+        if login_attempt is not None
+        else _context_session_generation()
+    )
+    _assert_current_session(generation)
+    auth_type = (
+        _CancellableSpotifyPKCE if login_attempt is not None else SpotifyPKCE
+    )
+    cache_options = (
+        {"cache_handler": _StagedCacheHandler(_cache_path(), generation)}
+        if login_attempt is not None
+        else {"cache_handler": _SessionCacheHandler(_cache_path(), generation)}
+    )
+    login_options = (
+        {"login_attempt": login_attempt, "login_timeout": login_timeout}
+        if login_attempt is not None
+        else {}
+    )
+    return auth_type(
         client_id=client_id,
         redirect_uri=REDIRECT_URI,
         scope=SCOPE,
-        cache_path=_cache_path(),
         open_browser=True,
         # spotipy defaults this to None, meaning a token request can wait
         # forever. That is not hypothetical here: refreshing an expired token
@@ -133,12 +368,9 @@ def _auth_manager() -> SpotifyPKCE:
         # or occupy the single Spotify worker indefinitely. The ordinary API
         # client has its own five-second default; this is the auth half.
         requests_timeout=_TOKEN_TIMEOUT_SECONDS,
+        **cache_options,
+        **login_options,
     )
-
-
-# Long enough not to trip on a slow connection, short enough that a hung
-# endpoint doesn't look like a hung app.
-_TOKEN_TIMEOUT_SECONDS = 10
 
 
 def has_cached_token() -> bool:
@@ -156,9 +388,13 @@ def has_cached_token() -> bool:
     if not is_configured():
         return False
     try:
+        generation = _context_session_generation()
+        _assert_current_session(generation)
         auth = _auth_manager()
         token = auth.cache_handler.get_cached_token()
-        return bool(token) and not auth.is_token_expired(token)
+        result = bool(token) and not auth.is_token_expired(token)
+        _assert_current_session(generation)
+        return result
     except Exception:
         log.exception("Couldn't read the cached Spotify token")
         return False
@@ -170,8 +406,12 @@ def is_logged_in() -> bool:
     when no client ID is configured yet."""
     if not is_configured():
         return False
+    generation = _context_session_generation()
+    _assert_current_session(generation)
     auth = _auth_manager()
-    return auth.validate_token(auth.cache_handler.get_cached_token()) is not None
+    result = auth.validate_token(auth.cache_handler.get_cached_token()) is not None
+    _assert_current_session(generation)
+    return result
 
 
 def links_for(item: dict) -> tuple:
@@ -201,29 +441,41 @@ def forget_login() -> bool:
     Returns whether the token file is actually gone. The caller should say so
     if it isn't, rather than reporting a logout that left credentials on disk.
 
-    Known gap: this does not cancel work already in flight, so a token refresh
-    that was already running can write the cache again afterwards. That needs
-    a session generation shared by the auth and job layers - see the open
-    logout item."""
-    global _client
-    _client = None
-    _playlist_name_cache.clear()
+    Increments the session generation before deleting credentials. Queued and
+    active work from the previous generation can still unwind, but it cannot
+    call Spotify, write a refreshed token, or deliver stale UI state."""
+    global _client, _session_generation, _token_blocked
+    with _active_login_lock:
+        active_login = _active_login
+    if active_login is not None:
+        active_login.cancel()
+
+    deleted = True
+    with _session_lock:
+        _session_generation += 1
+        _token_blocked = True
+        _client = None
+        _playlist_name_cache.clear()
+        try:
+            os.remove(_cache_path())
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.exception("Couldn't delete the cached Spotify token")
+            deleted = False
+
     # Deferred import: album_art doesn't need this module, and importing it at
     # module level would make that a cycle.
     from actions import album_art
 
     album_art.forget_all()
-    try:
-        os.remove(_cache_path())
-    except FileNotFoundError:
-        pass  # no token cached — nothing to forget
-    except OSError:
-        log.exception("Couldn't delete the cached Spotify token")
-        return False
-    return True
+    _notify_session_reset()
+    return deleted
 
 
-def login_async(on_done) -> None:
+def login_async(
+    on_done, *, timeout: float = _LOGIN_TIMEOUT_SECONDS
+) -> LoginAttempt:
     """Logs in on a background thread (opens the browser if there's no
     cached session) and calls on_done(success, error_message) when it's
     done. on_done fires on the background thread — callers must hop back
@@ -235,36 +487,80 @@ def login_async(on_done) -> None:
     Spotify request behind it. Nothing else is talking to the API while the
     user is logged out, so the one-session-one-thread rule still holds."""
 
-    def worker():
-        try:
-            _auth_manager().get_access_token()
-            on_done(True, None)
-        except Exception as e:
-            # The message reaches the Music panel, but the traceback only ever
-            # existed here — and a mismatched redirect URI is the single most
-            # likely first-run failure, so it needs to be in the log.
-            log.exception("Spotify login failed")
-            on_done(False, str(e))
+    global _active_login
+    attempt = LoginAttempt()
+    with _active_login_lock:
+        previous_attempt = _active_login
+        _active_login = attempt
+    if previous_attempt is not None:
+        previous_attempt.cancel()
 
-    threading.Thread(target=worker, daemon=True).start()
+    def worker():
+        ok = False
+        error_message = None
+        try:
+            auth = _auth_manager(login_attempt=attempt, login_timeout=timeout)
+            auth.get_access_token()
+            if attempt.finish(auth.cache_handler.commit):
+                ok = True
+            else:
+                error_message = (
+                    "Spotify login was cancelled. Press Cross to try again."
+                )
+        except LoginCancelled:
+            attempt.finish()
+            error_message = "Spotify login was cancelled. Press Cross to try again."
+        except LoginTimedOut:
+            attempt.finish()
+            error_message = "Spotify login timed out. Press Cross to try again."
+        except Exception as e:
+            if attempt.cancelled or isinstance(e, SessionEnded):
+                error_message = (
+                    "Spotify login was cancelled. Press Cross to try again."
+                )
+            else:
+                # The message reaches the Music panel, but the traceback only
+                # exists here. A mismatched redirect URI is the most likely
+                # first-run failure, so it needs to be in the log.
+                log.exception("Spotify login failed")
+                error_message = str(e)
+            attempt.finish()
+        with _active_login_lock:
+            global _active_login
+            if _active_login is attempt:
+                _active_login = None
+        try:
+            on_done(ok, error_message)
+        except Exception:
+            log.exception("Spotify login completion callback raised")
+
+    threading.Thread(target=worker, name="spotify-login", daemon=True).start()
+    return attempt
 
 
 def get_client() -> spotipy.Spotify:
     global _client
-    if _client is None:
-        _client = spotipy.Spotify(auth_manager=_auth_manager())
-    return _client
+    generation = _context_session_generation()
+    with _session_lock:
+        _assert_current_session(generation)
+        if _client is None:
+            _client = spotipy.Spotify(auth_manager=_auth_manager())
+        return _client
 
 
 def _call(fn, *args, **kwargs):
+    generation = _context_session_generation()
+    _assert_current_session(generation)
     try:
-        return fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
     except SpotifyException as e:
         if e.http_status == 404:
             raise PlaybackUnavailable("no_device") from e
         if e.http_status == 403:
             raise PlaybackUnavailable("premium_required") from e
         raise PlaybackUnavailable("other") from e
+    _assert_current_session(generation)
+    return result
 
 
 def get_current_playback():
@@ -296,6 +592,8 @@ def resolve_context_name(playback: dict) -> str | None:
     way to tell those apart from the API alone. Also None for context types
     this doesn't specifically handle (a podcast episode's show, etc.)."""
     context = playback.get("context") or {}
+    generation = _context_session_generation()
+    _assert_current_session(generation)
     context_type = context.get("type")
     uri = context.get("uri") or ""
 
@@ -305,8 +603,10 @@ def resolve_context_name(playback: dict) -> str | None:
 
     if context_type == "playlist":
         playlist_id = uri.rsplit(":", 1)[-1]
-        if playlist_id in _playlist_name_cache:
-            return _playlist_name_cache[playlist_id]
+        with _session_lock:
+            _assert_current_session(generation)
+            if playlist_id in _playlist_name_cache:
+                return _playlist_name_cache[playlist_id]
         try:
             result = get_client().playlist(playlist_id, fields="name")
         except Exception:
@@ -314,7 +614,9 @@ def resolve_context_name(playback: dict) -> str | None:
             return None
         name = result.get("name")
         if name:
-            _playlist_name_cache[playlist_id] = name
+            with _session_lock:
+                _assert_current_session(generation)
+                _playlist_name_cache[playlist_id] = name
         return name
 
     return None

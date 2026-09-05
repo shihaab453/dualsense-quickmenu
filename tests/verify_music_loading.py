@@ -311,6 +311,83 @@ check("and the panel switched to the logged-out view",
       panel._view_stack.currentWidget() is panel._logged_out_view)
 state["logged_in"] = True
 
+print("\n[an in-progress browser login can be cancelled]")
+original_login_async = sp.login_async
+login_callbacks = []
+
+
+class FakeLoginAttempt:
+    def __init__(self):
+        self.cancel_count = 0
+
+    def cancel(self):
+        self.cancel_count += 1
+        return True
+
+
+fake_login_attempt = FakeLoginAttempt()
+sp.login_async = lambda callback: (
+    login_callbacks.append(callback) or fake_login_attempt
+)
+panel._start_login()
+check("login is marked in progress", panel._logging_in)
+check("the action changes to cancellation",
+      panel._login_row._label.text() == "Cancel Spotify login")
+panel._start_login()
+check("pressing the row again requests cancellation",
+      fake_login_attempt.cancel_count == 1)
+login_callbacks[0](False, "Spotify login was cancelled. Press Cross to try again.")
+check("the cancelled login clears its in-progress state", not panel._logging_in)
+check("the login action is restored for retry",
+      panel._login_row._label.text() == "Log in with Spotify")
+check("the cancellation result is visible",
+      "cancelled" in panel._status_label.text().lower())
+sp.login_async = original_login_async
+
+print("\n[logout clears account data and cancels stale panel work]")
+state["logged_in"] = True
+submit.defer = True
+panel._library_loaded = False
+panel._start_library_load()
+check("sanity: an old-account load is queued", len(submit.jobs) == 1)
+panel._library_playlists = list(PLAYLISTS)
+panel._liked_songs_total = 7
+panel._library_offset = 2
+panel._library_total = 2
+panel._library_loaded = True
+panel._song_tracks = [track(42)]
+panel._song_offset = 1
+panel._song_total = 1
+panel._songs_cache_id = "old-playlist"
+panel._songs_loaded = True
+panel._pending_track = track(42)
+panel._current_track_id = "track42"
+panel._detail_title.setText("Old Account Song")
+panel._detail_artist.setText("Old Account Artist")
+sp._playlist_name_cache["old-playlist"] = "Old Account Playlist"
+album_art._cache["old-account-art"] = object()
+art_callbacks = []
+album_art._loader._pending["old-account-url"] = [(36, 8, art_callbacks.append)]
+sp.forget_login()
+check("library metadata is cleared",
+      panel._library_playlists == [] and panel._liked_songs_total == 0)
+check("track metadata is cleared",
+      panel._song_tracks == [] and panel._songs_cache_id is music._NO_PLAYLIST)
+check("detail metadata is cleared",
+      panel._pending_track is None and panel._current_track_id is None
+      and panel._detail_title.text() == "" and panel._detail_artist.text() == "")
+check("module-level playlist names are cleared", sp._playlist_name_cache == {})
+check("decoded album artwork is cleared", len(album_art._cache) == 0)
+check("pending artwork completes empty and is forgotten",
+      art_callbacks == [None] and album_art._loader._pending == {})
+album_art._loader._on_downloaded("old-account-url", b"late bytes")
+check("a late artwork download cannot repopulate the cache",
+      "old-account-url" not in album_art._cache)
+submit.run_all()
+check("a queued old-account result cannot refill the library",
+      panel._library_playlists == [], f"(got {panel._library_playlists})")
+submit.defer = False
+
 print("\n[regressions found by the 2026-09-04 external review]")
 # Every one of these shipped through a green run of this very suite. They are
 # grouped here so the shape stays obvious: each is about work that was queued

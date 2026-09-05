@@ -45,6 +45,7 @@ def forget_all() -> None:
     data, and the next person to use this machine should not find the previous
     account's artwork still on screen."""
     _cache.clear()
+    _loader.cancel_all()
 
 
 def smallest_image_url(track: dict):
@@ -116,6 +117,9 @@ class _Loader(QObject):
         self._downloaded.emit(url, data)
 
     def _on_downloaded(self, url: str, data: bytes) -> None:
+        pending = self._pending.pop(url, [])
+        if not pending:
+            return
         raw = None
         if data:
             candidate = QPixmap()
@@ -123,8 +127,15 @@ class _Loader(QObject):
                 raw = candidate
         if raw is not None:
             _remember(url, raw)
-        for size, radius, callback in self._pending.pop(url, []):
+        for size, radius, callback in pending:
             callback(rounded(raw, size, radius) if raw is not None else None)
+
+    def cancel_all(self) -> None:
+        """Drop pending account artwork and complete callbacks with no image."""
+        pending, self._pending = self._pending, {}
+        for requests in pending.values():
+            for _size, _radius, callback in requests:
+                callback(None)
 
 
 _loader = _Loader()

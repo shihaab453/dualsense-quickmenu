@@ -103,6 +103,35 @@ app.processEvents(QEventLoop.AllEvents, 50)
 check("the superseded result never reached the UI", "first" not in delivered,
       f"(got {delivered})")
 
+print("\n[Loader: logout-style cancellation drops queued and active work]")
+cancel_loader = Loader(worker.submit, "cancel-test")
+queue_gate = threading.Event()
+queue_drained = threading.Event()
+ran = []
+worker.submit(lambda: queue_gate.wait(3))
+cancel_loader.start(lambda: ran.append("queued"), lambda _value, _error: ran.append("callback"))
+cancel_loader.cancel()
+worker.submit(queue_drained.set)
+queue_gate.set()
+check("cancelled queued work never runs", pump(queue_drained.is_set) and not ran,
+      f"(got {ran})")
+
+active_started = threading.Event()
+active_gate = threading.Event()
+active_drained = threading.Event()
+delivered = []
+cancel_loader.start(
+    lambda: (active_started.set(), active_gate.wait(3), "old account")[2],
+    lambda value, _error: delivered.append(value),
+)
+check("sanity: work was active before cancellation", active_started.wait(1))
+cancel_loader.cancel()
+worker.submit(active_drained.set)
+active_gate.set()
+check("the active job finishes in the worker", pump(active_drained.is_set))
+app.processEvents(QEventLoop.AllEvents, 50)
+check("its late result never reaches the UI", delivered == [], f"(got {delivered})")
+
 print("\n[Loader: superseded work is skipped before it runs]")
 # Cheaper than dropping it on arrival: a request the user has already moved
 # past shouldn't spend a network round trip at all.
@@ -131,6 +160,18 @@ check("no command is dropped for a later one",
       pump(lambda: len(ran) == 3), f"(got {ran})")
 check("and they run in the order they were pressed",
       ran == ["first", "second", "third"], f"(got {ran})")
+
+print("\n[Commands: logout-style cancellation drops queued presses]")
+queue_gate = threading.Event()
+queue_drained = threading.Event()
+ran = []
+worker.submit(lambda: queue_gate.wait(3))
+commands.run(lambda: ran.append("old-account command"))
+commands.cancel_all()
+worker.submit(queue_drained.set)
+queue_gate.set()
+check("a queued command is cancelled at the session boundary",
+      pump(queue_drained.is_set) and ran == [], f"(got {ran})")
 
 print("\n[Commands: each one reports back]")
 results = []

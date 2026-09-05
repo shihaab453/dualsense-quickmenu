@@ -221,6 +221,8 @@ def check_settings_window():
     win.reload()
     check("settings window prefills the saved client ID",
           win._client_id_field.text() == "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
+    check("disconnect remains available without a valid cached token",
+          win._logout_button.isEnabled())
     check("settings window no longer has a games list",
           not hasattr(win, "_games_list"))
     check("hotkey choice defaults to Automatic",

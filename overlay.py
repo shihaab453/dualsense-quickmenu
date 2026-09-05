@@ -18,8 +18,8 @@
 import random
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QPropertyAnimation, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
+from PySide6.QtCore import QObject, QPoint, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFontMetrics, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 import logs
@@ -63,6 +63,8 @@ _CONTENT_GAP = 20
 _ADJUST_STEP = 2
 _ADJUST_STEP_FINE = 1  # used while Cross is held, for finer control
 _LEFT_ANCHOR_MARGIN = 210  # matches the mockup's Music panel left offset
+_PANEL_EDGE_MARGIN = 24
+_PANEL_TOP_MARGIN = 24
 
 
 # Windows normally refuses to let a background app grab focus (anti focus-
@@ -143,7 +145,7 @@ class _RefreshSignal(QObject):
     # get_now_playing_summary_async's callback fires on a background thread;
     # Qt widgets can only be touched from the main thread, so this hops back
     # over — same bridge shape as MusicPanel's login flow.
-    ready = Signal(object)  # dict | None
+    ready = Signal(int, object)  # session generation, dict | None
 
 
 class _NowPlayingCard(QFrame):
@@ -237,6 +239,11 @@ class _NowPlayingCard(QFrame):
 
         self._show_empty_state()
         self.set_selected(False)
+        sp.register_session_reset(self._reset_spotify_session)
+
+    def _reset_spotify_session(self) -> None:
+        self._refreshing = False
+        self._show_empty_state()
 
     # ---- text / art helpers ----
 
@@ -295,9 +302,14 @@ class _NowPlayingCard(QFrame):
         if self._refreshing:
             return
         self._refreshing = True
-        sp.get_now_playing_summary_async(self._signal.ready.emit)
+        generation = sp.session_generation()
+        sp.get_now_playing_summary_async(
+            lambda summary: self._signal.ready.emit(generation, summary)
+        )
 
-    def _on_summary_ready(self, summary) -> None:
+    def _on_summary_ready(self, generation: int, summary) -> None:
+        if not sp.is_session_current(generation):
+            return
         self._refreshing = False
         if summary is None:
             self._show_empty_state()
@@ -372,10 +384,17 @@ class _AppSwitcherCard(QFrame):
 
 
 class OverlayWindow(QWidget):
-    def __init__(self, get_battery=lambda: None, is_held=lambda name: False):
+    def __init__(
+        self,
+        get_battery=lambda: None,
+        is_held=lambda name: False,
+        screen_selector=None,
+    ):
         super().__init__()
         self._get_battery = get_battery
         self._is_held = is_held
+        self._screen_selector = screen_selector or self._screen_for_active_window
+        self._watched_screens = []
 
         # Frameless + always-on-top; Tool means no taskbar entry.
         self.setWindowFlags(
@@ -397,6 +416,13 @@ class OverlayWindow(QWidget):
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._update_status)
         self._clock_timer.start(1000)
+
+        app = QGuiApplication.instance()
+        if app is not None:
+            for screen in app.screens():
+                self._watch_screen(screen)
+            app.screenAdded.connect(self._on_screen_added)
+            app.screenRemoved.connect(self._on_screen_removed)
 
     # ---- UI construction ----
 
@@ -657,7 +683,79 @@ class OverlayWindow(QWidget):
 
     # ---- open / close ----
 
+    @staticmethod
+    def _screen_for_active_window():
+        """Choose the screen containing the app or game currently in front."""
+        # Win32 and Qt can use different coordinate scales in a mixed-DPI
+        # virtual desktop. Match the native monitor name first so a physical
+        # foreground-window point cannot land in one of Qt's logical gaps.
+        monitor_name = window_switcher.foreground_monitor_name()
+        if monitor_name:
+            wanted = monitor_name.casefold()
+            for screen in QGuiApplication.screens():
+                if screen.name().casefold() == wanted:
+                    return screen
+
+        center = window_switcher.foreground_window_center()
+        if center is not None:
+            screen = QGuiApplication.screenAt(QPoint(*center))
+            if screen is not None:
+                return screen
+
+        # A foreground window can disappear between the two Win32 calls, or
+        # its saved coordinates can point at a monitor that was just removed.
+        # The cursor screen is the best local fallback before the primary.
+        screen = QGuiApplication.screenAt(QCursor.pos())
+        return screen or QGuiApplication.primaryScreen()
+
+    def _refresh_screen_geometry(self) -> None:
+        """Rebind the overlay to the selected screen's full logical geometry."""
+        screen = self._screen_selector()
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+
+        geometry = screen.geometry()
+        if not geometry.isValid():
+            return
+
+        # setScreen helps Qt switch its device-pixel ratio before painting.
+        # Tests can supply a lightweight geometry provider, so only pass real
+        # QScreen objects to the native window handle.
+        if any(screen is candidate for candidate in QGuiApplication.screens()):
+            handle = self.windowHandle()
+            if handle is not None and handle.screen() is not screen:
+                handle.setScreen(screen)
+        self.setGeometry(geometry)
+
+    def _watch_screen(self, screen) -> None:
+        if any(screen is watched for watched in self._watched_screens):
+            return
+        self._watched_screens.append(screen)
+        screen.geometryChanged.connect(self._on_screen_geometry_changed)
+
+    def _on_screen_added(self, screen) -> None:
+        self._watch_screen(screen)
+        if self.isVisible():
+            QTimer.singleShot(0, self._refresh_screen_geometry)
+
+    def _on_screen_removed(self, screen) -> None:
+        self._watched_screens = [
+            watched for watched in self._watched_screens if watched is not screen
+        ]
+        if self.isVisible():
+            QTimer.singleShot(0, self._refresh_screen_geometry)
+
+    def _on_screen_geometry_changed(self, _geometry) -> None:
+        if self.isVisible():
+            QTimer.singleShot(0, self._refresh_screen_geometry)
+
     def open_menu(self) -> None:
+        # Capture the foreground window before this overlay takes focus. Doing
+        # this on every open also handles games moved between monitors and
+        # display topology or scaling changes made while the menu was hidden.
+        self._refresh_screen_geometry()
         self.nav.clear()
         self._mode = "home"
         self._home_focus = "tray"
@@ -752,7 +850,10 @@ class OverlayWindow(QWidget):
         content_bottom = tray_y - _LABEL_GAP - _CONTENT_GAP
         if self._mode == "panel" and self._active_panel:
             panel = self._active_panel
-            panel.adjustSize()
+            panel.fit_to_viewport(
+                w - 2 * _PANEL_EDGE_MARGIN,
+                content_bottom - _PANEL_TOP_MARGIN,
+            )
             if getattr(panel, "anchor", "center") == "left":
                 # On a screen wide enough, hold the mockup's 210px left offset.
                 # On a narrower one, center instead — min(_LEFT_ANCHOR_MARGIN,
@@ -764,11 +865,14 @@ class OverlayWindow(QWidget):
                 # on any screen narrower than panel.width() + 210 — e.g. a
                 # 1707px-wide screen with Music's 1500px panel, where it
                 # clamped to x=207 and sat flush against the right edge.
-                max_x = w - panel.width()
-                x = _LEFT_ANCHOR_MARGIN if max_x >= _LEFT_ANCHOR_MARGIN else max(0, max_x // 2)
+                max_x = max(0, w - panel.width())
+                if max_x >= _LEFT_ANCHOR_MARGIN + _PANEL_EDGE_MARGIN:
+                    x = _LEFT_ANCHOR_MARGIN
+                else:
+                    x = max(0, max_x // 2)
             else:
-                x = (w - panel.width()) // 2
-            panel.move(x, content_bottom - panel.height())
+                x = max(0, (w - panel.width()) // 2)
+            panel.move(x, max(_PANEL_TOP_MARGIN, content_bottom - panel.height()))
         else:
             self._cards_widget.adjustSize()
             self._cards_widget.move(

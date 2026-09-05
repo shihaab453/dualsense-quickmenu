@@ -72,6 +72,10 @@ class Worker:
 # other, and opening the switcher shouldn't wait behind a music request.
 SYSTEM = Worker("system")
 
+# WinRT media-session discovery has its own worker. It must be able to finish
+# while Spotify is refreshing a token or waiting on a network response.
+MEDIA = Worker("media-session")
+
 
 class Commands(QObject):
     """Runs what the user pressed, in order, dropping nothing.
@@ -98,6 +102,7 @@ class Commands(QObject):
         self._submit = submit
         self._name = name
         self._next_id = 0
+        self._generation = 0
         self._callbacks: dict[int, object] = {}
         self._finished.connect(self._deliver)
 
@@ -106,10 +111,13 @@ class Commands(QObject):
         on the Qt main thread once it has finished, whatever happened."""
         self._next_id += 1
         command_id = self._next_id
+        generation = self._generation
         if on_done is not None:
             self._callbacks[command_id] = on_done
 
         def job():
+            if generation != self._generation:
+                return
             try:
                 self._finished.emit(command_id, work(), None)
             except Exception as e:
@@ -121,6 +129,11 @@ class Commands(QObject):
         on_done = self._callbacks.pop(command_id, None)
         if on_done is not None:
             on_done(value, error)
+
+    def cancel_all(self) -> None:
+        """Cancel queued commands and discard callbacks from active ones."""
+        self._generation += 1
+        self._callbacks.clear()
 
 
 class Loader(QObject):
@@ -175,3 +188,8 @@ class Loader(QObject):
         if on_ready is None or token != self._token:
             return
         on_ready(value, error)
+
+    def cancel(self) -> None:
+        """Discard queued work and any result still on its way to Qt."""
+        self._token += 1
+        self._callbacks.clear()

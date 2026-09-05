@@ -17,7 +17,7 @@ from actions import now_playing
 from actions import spotify_client as sp
 from nav import RowList
 from panels.base import ActionRow, Panel, open_in_spotify
-from workers import Loader
+from workers import MEDIA, Loader
 
 log = logs.get(__name__)
 
@@ -85,7 +85,12 @@ class NowPlayingPanel(Panel):
         # Both lookups are slow enough to matter and neither belongs on the
         # Qt thread: Spotify is a network round trip, and the Windows media
         # session is a WinRT call that has to spin up its own event loop.
-        self._loader = Loader(sp.submit, "nowplaying")
+        self._spotify_loader = Loader(sp.submit, "nowplaying/spotify")
+        self._winrt_loader = Loader(MEDIA.submit, "nowplaying/winrt")
+        self._spotify_pending = False
+        self._winrt_pending = False
+        self._spotify_track = None
+        self._winrt_info = None
         self._nav = None
         self._reset_art_placeholder()
 
@@ -108,6 +113,20 @@ class NowPlayingPanel(Panel):
         # panel actually had), clipping the second line.
         note.setMinimumHeight(40)
         self.body.addWidget(note)
+        sp.register_session_reset(self._reset_spotify_session)
+
+    def _reset_spotify_session(self) -> None:
+        """Discard old-account results and callbacks when Spotify disconnects."""
+        self._spotify_loader.cancel()
+        self._winrt_loader.cancel()
+        self._spotify_pending = False
+        self._winrt_pending = False
+        self._spotify_track = None
+        self._winrt_info = None
+        self._last_result = None
+        self._current_art_id = None
+        self._current_track = None
+        self._render("Nothing playing", None)
 
     def _reset_art_placeholder(self) -> None:
         self._art_label.setPixmap(QPixmap())
@@ -124,35 +143,17 @@ class NowPlayingPanel(Panel):
         self._art_label.setPixmap(pixmap)
 
     @staticmethod
-    def _look_up_whats_playing():
-        """Spotify's own state if there is any, else the Windows-wide media
-        session. Runs on a worker thread, so it must not touch a widget.
+    def _look_up_spotify():
+        """Return Spotify's current track, or None, without touching widgets."""
+        if not sp.is_logged_in():
+            return None
+        playback = sp.get_current_playback()
+        return playback.get("item") if playback else None
 
-        Returns (spotify_track_or_None, fallback_info_or_None).
-
-        Both halves still run on the Spotify worker, one after the other, so
-        the Windows fallback waits behind the Spotify attempt it exists to
-        cover for. That is bounded now rather than open-ended (the auth and
-        API calls both have timeouts), but it is still the wrong shape: the
-        two should run on separate workers and the Spotify answer should win
-        when it arrives. Left as an open item rather than half-done here."""
-        track = None
-        try:
-            if sp.is_logged_in():
-                playback = sp.get_current_playback()
-                if playback and playback.get("item"):
-                    track = playback["item"]
-        except Exception:
-            # Falls back to the Windows-wide media session, so this is a
-            # degraded-but-working path rather than a failure the user sees.
-            log.exception("Spotify playback lookup failed; falling back to Windows")
-        if track is not None:
-            return track, None
-        try:
-            return None, now_playing.get()
-        except Exception:
-            log.exception("Windows media session lookup failed")
-            return None, None
+    @staticmethod
+    def _look_up_winrt():
+        """Return the Windows media-session fallback without touching widgets."""
+        return now_playing.get()
 
     def build_nav(self):
         # One RowList, filled in when the lookup lands. The open-in-Spotify
@@ -169,15 +170,42 @@ class NowPlayingPanel(Panel):
             self._render("Loading…", None)
         else:
             self._render(*self._last_result)
-        self._loader.start(self._look_up_whats_playing, self._on_looked_up)
+        self._spotify_pending = True
+        self._winrt_pending = True
+        self._spotify_track = None
+        self._winrt_info = None
+        self._spotify_loader.start(
+            self._look_up_spotify, self._on_spotify_looked_up
+        )
+        self._winrt_loader.start(self._look_up_winrt, self._on_winrt_looked_up)
         return self._nav
 
-    def _on_looked_up(self, value, error) -> None:
+    def _on_spotify_looked_up(self, value, error) -> None:
+        self._spotify_pending = False
         if error is not None:
-            log.exception("Couldn't work out what's playing", exc_info=error)
-            self._render("Nothing playing", None)
-            return
-        track, info = value
+            log.exception(
+                "Spotify playback lookup failed; using the Windows fallback",
+                exc_info=error,
+            )
+            value = None
+        self._spotify_track = value
+        if value is not None:
+            self._apply_lookup_result(value, None)
+        elif not self._winrt_pending:
+            self._apply_lookup_result(None, self._winrt_info)
+
+    def _on_winrt_looked_up(self, value, error) -> None:
+        self._winrt_pending = False
+        if error is not None:
+            log.exception("Windows media session lookup failed", exc_info=error)
+            value = None
+        self._winrt_info = value
+        if self._spotify_track is None and (
+            value is not None or not self._spotify_pending
+        ):
+            self._apply_lookup_result(None, value)
+
+    def _apply_lookup_result(self, track, info) -> None:
         if track is not None:
             text = track.get("name") or "(unknown title)"
             artists = ", ".join(a["name"] for a in track.get("artists", []))

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +26,8 @@ _log = logs.get(__name__)
 # Default cap on how tall a scrollable row list can grow before scrolling,
 # so a panel's size stays consistent regardless of how many rows it holds.
 DEFAULT_LIST_MAX_HEIGHT = 500
+_MIN_FITTED_SCROLL_HEIGHT = 72
+_MAX_WIDGET_SIZE = 16777215
 
 
 class Tile(QLabel):
@@ -85,6 +88,7 @@ class Panel(QFrame):
     def __init__(self, title: str, width: int = 460):
         super().__init__()
         self.setObjectName("panel")
+        self.preferred_width = width
         self.setFixedWidth(width)
         # Exact mockup values: panel surface rgba(24,25,29,0.86), border
         # rgba(255,255,255,0.08) — QSS accepts alpha as either 0-255 (plain
@@ -126,6 +130,66 @@ class Panel(QFrame):
         # mockup) or "left" — checked by OverlayWindow._relayout() instead
         # of it needing to know about specific Panel subclasses.
         self.anchor = "center"
+
+    def fit_to_viewport(self, max_width: int, max_height: int) -> None:
+        """Fit this panel inside the overlay while preserving its ideal size.
+
+        Qt screen geometry is expressed in logical pixels, so the same method
+        handles ordinary resolutions and Windows display scaling. Scrollable
+        row lists give up height first. If a very small display still cannot
+        fit an inflexible view, the panel itself is capped as a last resort so
+        its geometry never extends beyond the screen.
+        """
+        max_width = max(1, int(max_width))
+        max_height = max(1, int(max_height))
+
+        # Release a height cap from a previous, smaller monitor and restore
+        # each row list to the content height recorded by
+        # fit_scroll_to_content().
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(_MAX_WIDGET_SIZE)
+        for scroll in self.findChildren(QScrollArea):
+            preferred = scroll.property("dsqmPreferredHeight")
+            if preferred is not None:
+                scroll.setFixedHeight(int(preferred))
+        # Music keeps its current page in a fixed-height QStackedWidget so
+        # hidden pages cannot inflate the panel. Recompute that preferred
+        # height after restoring its scroll area from a smaller monitor.
+        for stack in self.findChildren(QStackedWidget):
+            current = stack.currentWidget()
+            if current is not None:
+                if current.layout() is not None:
+                    current.layout().invalidate()
+                stack.setFixedHeight(current.sizeHint().height())
+
+        self.setFixedWidth(min(self.preferred_width, max_width))
+        self.adjustSize()
+
+        overflow = max(0, self.height() - max_height)
+        if overflow:
+            visible_scrolls = [
+                scroll for scroll in self.findChildren(QScrollArea)
+                if scroll.isVisibleTo(self)
+            ]
+            for scroll in visible_scrolls:
+                reducible = max(0, scroll.height() - _MIN_FITTED_SCROLL_HEIGHT)
+                reduction = min(overflow, reducible)
+                if reduction:
+                    scroll.setFixedHeight(scroll.height() - reduction)
+                    parent = scroll.parentWidget()
+                    while parent is not None and parent is not self:
+                        if isinstance(parent, QStackedWidget):
+                            parent.setFixedHeight(max(1, parent.height() - reduction))
+                            break
+                        parent = parent.parentWidget()
+                    overflow -= reduction
+                if not overflow:
+                    break
+            self.layout().invalidate()
+            self.adjustSize()
+
+        if self.height() > max_height:
+            self.setFixedHeight(max_height)
 
     def build_nav(self):
         """Return the RowList this panel should push onto the NavStack when
@@ -259,4 +323,8 @@ def fit_scroll_to_content(scroll: QScrollArea, max_height: int = DEFAULT_LIST_MA
     rows_widget = scroll.widget()
     content_height = rows_widget.sizeHint().height()
     height = min(content_height, max_height)
+    # Panel.fit_to_viewport() may temporarily reduce this on a shorter screen.
+    # Keep the content-sized value so moving back to a taller monitor restores
+    # the list instead of leaving it permanently compressed.
+    scroll.setProperty("dsqmPreferredHeight", height)
     scroll.setFixedHeight(height)

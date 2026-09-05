@@ -30,6 +30,25 @@ shell32 = ctypes.WinDLL("shell32", use_last_error=True)
 
 _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", wintypes.LONG),
+        ("top", wintypes.LONG),
+        ("right", wintypes.LONG),
+        ("bottom", wintypes.LONG),
+    ]
+
+
+class _MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", _RECT),
+        ("rcWork", _RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", wintypes.WCHAR * 32),
+    ]
+
 user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
 user32.EnumWindows.restype = wintypes.BOOL
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
@@ -52,6 +71,12 @@ user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.ShowWindow.restype = wintypes.BOOL
 user32.GetForegroundWindow.argtypes = []
 user32.GetForegroundWindow.restype = ctypes.c_void_p
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
+user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+user32.MonitorFromWindow.restype = wintypes.HANDLE
+user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MONITORINFOEXW)]
+user32.GetMonitorInfoW.restype = wintypes.BOOL
 user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
 user32.SetForegroundWindow.restype = wintypes.BOOL
 user32.GetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -159,9 +184,47 @@ shell32.SHGetFileInfoW.restype = ctypes.c_void_p
 
 _SHGFI_ICON = 0x100
 _SHGFI_LARGEICON = 0x0
+_MONITOR_DEFAULTTONEAREST = 0x00000002
 
 
 # ---- foreground-forcing, shared with overlay.py's own use for itself ----
+
+
+def foreground_monitor_name():
+    """Return the native display name containing the foreground window."""
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    monitor = user32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
+    if not monitor:
+        return None
+    info = _MONITORINFOEXW()
+    info.cbSize = ctypes.sizeof(info)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return None
+    return info.szDevice or None
+
+
+def foreground_window_center():
+    """Return the desktop-coordinate center of the foreground window.
+
+    Desktop coordinates can be negative when a monitor sits above or to the
+    left of the primary display. Returning the coordinates unchanged lets Qt
+    match them against its own per-screen logical geometries, including mixed
+    DPI layouts.
+    """
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    rect = _RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    if rect.right <= rect.left or rect.bottom <= rect.top:
+        return None
+    return (
+        rect.left + (rect.right - rect.left) // 2,
+        rect.top + (rect.bottom - rect.top) // 2,
+    )
 
 
 def force_foreground(hwnd: int) -> None:

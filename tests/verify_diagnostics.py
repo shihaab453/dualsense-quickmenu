@@ -119,11 +119,28 @@ longest = max(len(l) for l in text.splitlines())
 check("long lines are truncated", longest < 200, f"(longest was {longest})")
 
 print("\n[clean log]")
+# Both sources have to be empty: the report reads the in-memory records first
+# and only falls back to parsing the file when there are none.
 empty = tempfile.mkdtemp(prefix="dsqm_diag_empty_")
 _real_log_path = logs.log_path
 logs.log_path = lambda: os.path.join(empty, "log.txt")
+logs.forget_recent()
 check("says so when there are no problems",
       "No warnings or errors logged." in diagnostics.report())
+
+# With nothing in memory but something in the file - what a crash and restart
+# looks like - the file is still read, and the report says where it came from.
+with open(os.path.join(empty, "log.txt"), "w", encoding="utf-8") as f:
+    f.write("2026-09-05 10:00:00 ERROR    prev.run: something failed last time\n")
+# Cleared again immediately before the call: building a report reads the
+# cached Spotify token, and this suite's token file is deliberately malformed,
+# so the previous report left a record of its own behind.
+logs.forget_recent()
+text = diagnostics.report()
+check("falls back to the log file when nothing was logged this run",
+      "something failed last time" in text)
+check("says the fallback lines are older", "from before this run" in text,
+      f"(got {[l for l in text.splitlines() if 'arnings' in l]})")
 logs.log_path = _real_log_path
 
 print("\n[a secret that reached the log file]")
@@ -144,5 +161,62 @@ for planted in ("PLANTED_ACCESS_TOKEN", "PLANTED_BEARER_VALUE", "PLANTED_REFRESH
     check(f"{planted} does not survive into the report", planted not in text)
 check("and the surrounding log line is still there to read",
       "request failed" in text, "(redaction shouldn't blank the whole message)")
+
+print("\n[structured fields]")
+# The fixed part of the report is an allowlist, and that is the property worth
+# pinning: a field appears because this list names it, not because some string
+# happened to end up in the text.
+data = diagnostics.report_data()
+labels = [label for label, _value in data["environment"] + data["state"]]
+check("the fields are the ones the report promises",
+      labels == ["Build", "System", "Python", "Controller", "Global hotkey",
+                 "Spotify", "Log file"],
+      f"(got {labels})")
+check("problems come back as fields, not as a formatted line",
+      all(set(p) == {"when", "level", "source", "summary"} for p in data["problems"]),
+      f"(got {data['problems'][:1]})")
+check("the rendered report is built from that structure",
+      data["title"] in diagnostics.report())
+
+print("\n[secrets that arrive as log arguments]")
+# The layer free-text matching can't reach. A log record keeps its message
+# template apart from its arguments, so an argument the template itself calls
+# a token can be dropped without anyone having to guess its shape - even when
+# the value looks like an ordinary word.
+logs.forget_recent()
+log = logs.get("probe")
+log.error("refresh rejected, token %s is stale", "PlantedShortArg")
+log.warning("saving %s failed with password %s", "settings.json", "hunter2")
+log.error("fetching %s failed",
+          "https://api.spotify.com/v1/me?access_token=PLANTEDURLTOKEN")
+log.error("unexpected value %s", "A1b2C3d4E5f6G7h8J9k0L1")
+log.error("could not read %s", os.path.join(home, "Documents", "notes.txt"))
+log.warning("contact %s about it", "someone@example.com")
+text = diagnostics.report()
+
+check("an argument the template calls a token is dropped",
+      "PlantedShortArg" not in text and "is stale" in text,
+      "(a plain-looking word, caught only because of the words in front of it)")
+check("an argument the template calls a password is dropped",
+      "hunter2" not in text)
+check("the argument next to it is kept", "settings.json" in text)
+check("a URL's query string is dropped", "PLANTEDURLTOKEN" not in text)
+check("but the URL itself survives", "api.spotify.com" in text)
+check("a long opaque value is dropped", "A1b2C3d4E5f6G7h8J9k0L1" not in text)
+check("a home path in an argument is rewritten",
+      home not in text and "notes.txt" in text)
+check("an e-mail address is dropped", "someone@example.com" not in text)
+
+print("\n[what an exception contributes]")
+logs.forget_recent()
+try:
+    raise FileNotFoundError(os.path.join(home, "a-real-path-nobody-should-see.txt"))
+except FileNotFoundError:
+    logs.get("probe").exception("Couldn't open the settings file")
+text = diagnostics.report()
+check("the exception type is reported", "FileNotFoundError" in text)
+check("the exception's own message is not",
+      "a-real-path-nobody-should-see" not in text,
+      "(an exception message routinely carries the value that caused it)")
 
 finish()

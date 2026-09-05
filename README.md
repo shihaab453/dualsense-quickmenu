@@ -186,10 +186,17 @@ reacting to the D-pad; closing the menu gives focus straight back.
 
 **Start here for anything not listed below.** Right-click the tray icon →
 **Settings…** → **Copy diagnostics**, then paste the result into your
-message. It's a short summary of your setup plus the last few errors, and it
-deliberately contains no passwords, tokens, or account details. **Open log
-folder** next to it gets you the full `log.txt` if more detail is needed.
-Nothing is uploaded anywhere automatically.
+message. It's a short summary of your setup plus the last few errors.
+
+The report is shown to you first, in a box you can edit, and nothing is copied
+until you press the button in it. Your Spotify client ID and login token are
+never in it, only whether they exist. The error lines have your home folder,
+web addresses, e-mail addresses and anything credential-shaped stripped out of
+them, which catches the shapes we know about rather than every shape there is,
+so the box is there for you to check. **Open log folder** next to it gets you
+the full `log.txt` if more detail is needed. That file has had none of the
+above done to it, so read it before you send it. Nothing is uploaded anywhere
+automatically.
 
 - **PS button does nothing**: make sure the controller is on USB and that no
   other tool (DS4Windows, Steam with "PlayStation Controller Support"

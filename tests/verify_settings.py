@@ -111,7 +111,7 @@ check("forget_login on a fresh install is a no-op", True)
 # ------------------------------------------------------------------- Qt layer
 print("\n[overlay / Music panel / Settings window]")
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from overlay import OverlayWindow
 
@@ -262,8 +262,86 @@ def check_settings_window():
     check("cleared state reported", "off" in win._spotify_status.text(),
           f"(got {win._spotify_status.text()!r})")
 
+    check_diagnostics_preview(win)
+
     win.deleteLater()
     finish(app)
+
+
+class _FakeClipboard:
+    """Stands in for the real one. This suite runs in the `unit` group, which
+    promises to touch no OS state outside a temp folder - and the clipboard is
+    very much OS state that somebody is in the middle of using."""
+
+    def __init__(self):
+        self.value = "left alone"
+
+    def setText(self, text: str) -> None:
+        self.value = text
+
+
+class _FakeGuiApplication:
+    def __init__(self, clipboard):
+        self._clipboard = clipboard
+
+    def clipboard(self):
+        return self._clipboard
+
+
+def check_diagnostics_preview(win):
+    print("\n[diagnostics preview]")
+    # The report is shown before it is copied, because its redaction is
+    # pattern matching over log text and the person whose machine it is can
+    # spot one thing no pattern can: their own data. So the two properties
+    # worth pinning down are that cancelling copies nothing at all, and that
+    # copying takes what is in the box rather than what was put there.
+    preview = settings_window.DiagnosticsPreview("first line\nsecond line", win)
+    check("the preview shows the report",
+          preview.text() == "first line\nsecond line")
+    preview._edit.setPlainText("what the user left in the box")
+    check("and an edit is what it hands back",
+          preview.text() == "what the user left in the box")
+    preview.deleteLater()
+
+    clipboard = _FakeClipboard()
+    real_gui = settings_window.QGuiApplication
+    real_preview = settings_window.DiagnosticsPreview
+    settings_window.QGuiApplication = _FakeGuiApplication(clipboard)
+
+    class _Preview:
+        """A preview that answers immediately, since exec() would block."""
+
+        answer = QDialog.Rejected
+
+        def __init__(self, text, parent=None):
+            self.given = text
+
+        def exec(self):
+            return self.answer
+
+        def text(self):
+            return "edited by the user"
+
+    try:
+        settings_window.DiagnosticsPreview = _Preview
+        win._copy_diagnostics()
+        check("cancelling the preview copies nothing",
+              clipboard.value == "left alone", f"(got {clipboard.value!r})")
+        check("and the window says so",
+              "Nothing was copied" in win._diagnostics_status.text(),
+              f"(got {win._diagnostics_status.text()!r})")
+
+        _Preview.answer = QDialog.Accepted
+        win._copy_diagnostics()
+        check("accepting copies exactly what the box held",
+              clipboard.value == "edited by the user",
+              f"(got {clipboard.value!r})")
+        check("and reports how much was copied",
+              "Copied 1 line " in win._diagnostics_status.text(),
+              f"(got {win._diagnostics_status.text()!r})")
+    finally:
+        settings_window.QGuiApplication = real_gui
+        settings_window.DiagnosticsPreview = real_preview
 
 
 QTimer.singleShot(200, open_music)

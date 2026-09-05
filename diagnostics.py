@@ -7,14 +7,34 @@
 # puts a short report on the clipboard makes the ask "click this and paste it",
 # which people actually do.
 #
-# The output is written to be pasted into a chat message, which shapes two
-# decisions:
+# The output is written to be pasted into a chat message, which shapes how it
+# is built. Three layers, in order of how much each can promise:
 #
-#   * It never includes secrets. The Spotify client ID and OAuth token are
-#     reported as booleans — "saved" / "logged in" — never as values.
-#   * The user's home directory is replaced with %USERPROFILE% in log excerpts,
-#     since those lines contain real paths and someone's Windows username is
-#     usually their actual name.
+#   1. The fixed fields are an allowlist. Version, OS, controller state, hotkey
+#      state, Spotify state: every one of them is a value this file chooses to
+#      report. The Spotify client ID and OAuth token appear as booleans —
+#      "saved" / "logged in" — never as values. Nothing reaches this part of
+#      the report unless it is named here, so nothing can leak into it.
+#
+#   2. The recent warnings and errors come from logs.recent_problems(), which
+#      keeps each record's message *template* apart from its *arguments*. The
+#      template is a literal written in this repo; the arguments are runtime
+#      values, and they are where a token or a real name would come from. So
+#      arguments are sanitised one at a time, and an argument the template
+#      itself calls a token or a password is dropped without being looked at.
+#      That is the one thing free-text pattern matching cannot do.
+#
+#   3. The rendered line then goes through _sanitize() anyway, as a net under
+#      the case layer 2 can't see: a message built with an f-string, where the
+#      value is already baked into what looks like a template. Home directory,
+#      credential-shaped text, URL query strings, e-mail addresses and long
+#      opaque values all come out. This layer is pattern matching over text the
+#      app does not fully control, so it is a net and not a promise.
+#
+# Which is why Settings shows the whole report in an editable box before
+# anything reaches the clipboard (settings_window.DiagnosticsPreview). A person
+# reading it is the last layer, and the only one that can catch a shape nobody
+# thought to write a pattern for.
 
 import os
 import platform
@@ -61,16 +81,32 @@ def register_hotkey_probe(probe) -> None:
     _hotkey_probe = probe
 
 
-# Things that look like credentials, wherever they turn up in a log line.
-# This is a safety net over text this app does not control, not a promise:
-# anything genuinely secret should never be logged in the first place. An
-# external review put a token into a log record and watched it come out in a
-# diagnostics report intact, which is what these exist to stop.
+# The safety net over text this app does not fully control (layer 3 in the
+# note at the top of this file). Not a promise: anything genuinely secret
+# should never be logged in the first place. An external review put a token
+# into a log record and watched it come out in a diagnostics report intact,
+# which is what these exist to stop.
+
+# Anything shaped like a URL. The query string is the interesting part: an
+# OAuth redirect carries `?code=` and sometimes `?access_token=`, and an image
+# URL's path is of no diagnostic value either way.
+_URL_RE = re.compile(r"""\b((?:https?|ftp)://[^\s"'<>\[\]]+)""")
+
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
+# Key names that mean "what follows is a credential", used two ways: to redact
+# `key=value` in free text, and to decide that a log argument introduced by one
+# of these words should not be printed at all.
+_CREDENTIAL_WORDS = (
+    r"access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|"
+    r"client[_-]?id|code[_-]?verifier|authorization|api[_-]?key|apikey|"
+    r"password|passwd|credential|secret|token|bearer"
+)
+
 _SECRET_PATTERNS = (
     # key=value and key: value, for the usual credential-ish key names
     re.compile(
-        r"(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|"
-        r"authorization|api[_-]?key|password|passwd|secret|bearer)"
+        r"(?i)\b(" + _CREDENTIAL_WORDS + r")"
         r"(\s*[=:]\s*|\s+)"
         r"([\"']?)([A-Za-z0-9._~+/\-]{8,})\3"
     ),
@@ -78,25 +114,128 @@ _SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9._\-]{20,}"),
 )
 
+# A long unbroken run that mixes letters and digits: an access token, a Spotify
+# ID, a session GUID, a hash. Nothing a person needs to read comes out this
+# shape, and it is what catches a secret that arrives with no key name in front
+# of it. Deliberately blunt — losing a long identifier from a report costs a
+# follow-up question, keeping a token costs an account.
+_OPAQUE_RE = re.compile(
+    r"(?<![A-Za-z0-9._~+/-])"
+    r"(?=[A-Za-z0-9._~+/-]*[A-Za-z])(?=[A-Za-z0-9._~+/-]*\d)"
+    r"[A-Za-z0-9._~+/-]{20,}"
+    r"(?![A-Za-z0-9._~+/-])"
+)
 
-def _redact(text: str) -> str:
+# Matched against the template text immediately before a placeholder, to decide
+# whether that argument is a credential. Narrower than _CREDENTIAL_WORDS on
+# purpose: "client id" in front of a placeholder is usually describing one
+# rather than printing one, and that line is more useful with it than without.
+_CREDENTIAL_INTRO_RE = re.compile(
+    r"(?i)(token|secret|password|passwd|credential|api[_-]?key|apikey|"
+    r"bearer|authorization|code[_-]?verifier)"
+)
+_INTRO_WINDOW = 48
+
+# %-style placeholders in a logging template, so each argument can be matched
+# to the words in front of it. `%%` is a literal percent and takes no argument.
+_PLACEHOLDER_RE = re.compile(
+    r"%[#0\- +]*[0-9*]*(?:\.[0-9*]+)?[hlL]?([diouxXeEfFgGcrsa%])"
+)
+
+
+def _strip_url_query(match: "re.Match") -> str:
+    url = match.group(1)
+    for separator in ("?", "#"):
+        head, sep, tail = url.partition(separator)
+        if sep and tail:
+            url = head + sep + "[redacted]"
+    return url
+
+
+def _sanitize(text: str) -> str:
     """Strips what we can recognise as private from text bound for the report:
-    the user's home directory (a Windows username is usually a real name) and
-    anything shaped like a credential.
+    the user's home directory (a Windows username is usually a real name), URL
+    query strings, e-mail addresses, credential-shaped key/value pairs and long
+    opaque values.
 
     Read the limitation before relying on this. It is pattern matching over
-    arbitrary log text, so it catches the shapes below and cannot promise
-    anything about a secret in a shape it has not seen. Treat the report as
-    "checked, not guaranteed" and keep secrets out of log messages."""
+    arbitrary text, so it catches the shapes below and cannot promise anything
+    about a secret in a shape it has not seen. It is the third of the three
+    layers described at the top of this file, and the weakest of them: the
+    report is "checked, not guaranteed", which is why a person reads it before
+    it is copied."""
     home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
     if home:
         text = re.sub(re.escape(home), "%USERPROFILE%", text, flags=re.IGNORECASE)
+
+    # URLs are handled first and then held out of the rest of the pass. Their
+    # query string is dropped here; what remains is a long run of letters,
+    # digits and slashes, which is exactly the shape _OPAQUE_RE exists to
+    # delete. Left in, "https://api.spotify.com/v1/me" came out as
+    # "https:[redacted]", which throws away the one part worth reading.
+    urls = []
+
+    def hold(match: "re.Match") -> str:
+        urls.append(_strip_url_query(match))
+        # NUL and digits only, so nothing below can match the placeholder.
+        return f"\x00{len(urls) - 1}\x00"
+
+    text = _URL_RE.sub(hold, text)
+    text = _EMAIL_RE.sub("[redacted e-mail]", text)
     for pattern in _SECRET_PATTERNS:
         if pattern.groups >= 4:
             text = pattern.sub(r"\1\2\3[redacted]\3", text)
         else:
             text = pattern.sub("[redacted]", text)
+    text = _OPAQUE_RE.sub("[redacted]", text)
+    for index, url in enumerate(urls):
+        text = text.replace(f"\x00{index}\x00", url)
     return text
+
+
+def _template_prefixes(template: str) -> list:
+    """The template text in front of each placeholder, one entry per argument.
+
+    `"refreshing %s with token %s"` gives `["refreshing ", " with token "]`,
+    which is what tells us the second argument must never be printed and the
+    first one probably can be."""
+    prefixes = []
+    last = 0
+    for match in _PLACEHOLDER_RE.finditer(template):
+        if match.group(1) == "%":  # a literal percent, not an argument
+            continue
+        prefixes.append(template[last:match.start()])
+        last = match.end()
+    return prefixes
+
+
+def _sanitize_args(template: str, args):
+    """Sanitise a log record's arguments before they are formatted into it.
+
+    Layer 2 from the note at the top: an argument introduced by a credential
+    word is dropped without being inspected, and every other string argument
+    goes through the text sanitiser. Numbers are left as they are, so that a
+    `%d` placeholder still formats."""
+    if isinstance(args, dict):
+        return {
+            key: (
+                "[redacted]"
+                if isinstance(value, str) and _CREDENTIAL_INTRO_RE.search(key)
+                else _sanitize(value) if isinstance(value, str) else value
+            )
+            for key, value in args.items()
+        }
+    if not args:
+        return ()
+    prefixes = _template_prefixes(template)
+    out = []
+    for index, value in enumerate(args):
+        if not isinstance(value, str):
+            out.append(value)
+            continue
+        intro = prefixes[index][-_INTRO_WINDOW:] if index < len(prefixes) else ""
+        out.append("[redacted]" if _CREDENTIAL_INTRO_RE.search(intro) else _sanitize(value))
+    return tuple(out)
 
 
 def _spotify_line() -> str:
@@ -155,48 +294,133 @@ def _hotkey_line() -> str:
     )
 
 
-def _recent_problems() -> tuple:
-    """(lines, total_count) for the warnings and errors in the log, newest last."""
+def _problem_from_record(record: dict) -> dict:
+    """One buffered log record, turned into a line a stranger can safely read.
+
+    This is where layers 2 and 3 from the note at the top meet: the arguments
+    are sanitised as separate values, formatted into the template, and the
+    result is then sanitised again in case the "template" was really an
+    f-string with a value already inside it."""
+    template = record.get("template") or ""
+    args = _sanitize_args(template, record.get("args") or ())
+    if args:
+        try:
+            summary = template % args
+        except Exception:
+            # A template and its arguments that don't agree: log.py never
+            # formatted them either, so print what we have rather than nothing.
+            values = args.values() if isinstance(args, dict) else args
+            summary = template + " " + " ".join(str(value) for value in values)
+    else:
+        summary = template
+    if record.get("exc_type"):
+        # The exception type, never its message: "failed to save (OSError)"
+        # says what a reader needs, and an exception's message routinely
+        # carries the path or value that caused it.
+        summary = f"{summary} ({record['exc_type']})"
+    return {
+        "when": record.get("when", ""),
+        "level": record.get("level", ""),
+        "source": record.get("source", ""),
+        "summary": _trim(_sanitize(summary.strip())),
+    }
+
+
+def _trim(message: str) -> str:
+    if len(message) > _MAX_LINE_LENGTH:
+        return message[:_MAX_LINE_LENGTH].rstrip() + "…"
+    return message
+
+
+def _problems_from_log_file() -> tuple:
+    """The fallback for when the in-memory buffer is empty, which is what a
+    crash and restart looks like — and that is exactly when someone reaches
+    for this report. The file has no template/argument split left in it, so
+    these lines get the text sanitiser only, and the report says so."""
     try:
         with open(logs.log_path(), "rb") as f:
             text = f.read().decode("utf-8", errors="replace")
     except OSError:
         return [], 0
 
-    matches = []
+    problems = []
     for line in text.splitlines():
         match = _LOG_LINE_RE.match(line)
         if not match:
             continue
         date, time_hm, level, source, message = match.groups()
-        message = message.strip()
-        if len(message) > _MAX_LINE_LENGTH:
-            message = message[:_MAX_LINE_LENGTH].rstrip() + "…"
-        matches.append(f"{date} {time_hm} {level} {source}: {message}")
-    return matches[-_MAX_PROBLEMS:], len(matches)
+        problems.append({
+            "when": f"{date} {time_hm}",
+            "level": level,
+            "source": source,
+            "summary": _trim(_sanitize(message.strip())),
+        })
+    return problems, len(problems)
 
 
-def report() -> str:
-    """The full diagnostics text, ready for the clipboard."""
+def _recent_problems() -> tuple:
+    """(problems, total, from_this_run).
+
+    Structured records from this run when there are any, and last run's log
+    file when there aren't. Newest last, capped at _MAX_PROBLEMS."""
+    records = logs.recent_problems()
+    if records:
+        problems = [_problem_from_record(record) for record in records]
+        return problems[-_MAX_PROBLEMS:], len(problems), True
+    problems, total = _problems_from_log_file()
+    return problems[-_MAX_PROBLEMS:], total, False
+
+
+def report_data() -> dict:
+    """The report as fields rather than as text.
+
+    This is the allowlist: the two field lists below are the complete set of
+    facts the report states about a machine, and adding to them is a decision
+    someone has to make on purpose. report() renders this; the preview in
+    Settings shows what report() returned. Keeping the structure means the
+    privacy rules are enforced somewhere other than inside a format string."""
     try:
         pyside_version = __import__("PySide6").__version__
     except Exception:
         pyside_version = "unknown"
 
-    lines = [
-        f"{version.APP_NAME} {version.VERSION}",
-        f"Build: {'packaged' if getattr(sys, 'frozen', False) else 'from source'}",
-        f"System: {platform.platform()} ({platform.machine()})",
-        f"Python {platform.python_version()} / PySide6 {pyside_version}",
-        "",
-        f"Controller: {_controller_line()}",
-        f"Global hotkey: {_hotkey_line()}",
-        f"Spotify: {_spotify_line()}",
-        f"Log file: {_redact(logs.log_path())}",
-    ]
+    # Gathered before the fields below, and that ordering matters: reading
+    # Spotify's cached token can itself log a warning, and a report that lists
+    # the errors it caused by being generated is a confusing thing to read.
+    problems, total, from_this_run = _recent_problems()
+    return {
+        "title": f"{version.APP_NAME} {version.VERSION}",
+        "environment": [
+            ("Build", "packaged" if getattr(sys, "frozen", False) else "from source"),
+            ("System", f"{platform.platform()} ({platform.machine()})"),
+            ("Python", f"{platform.python_version()} / PySide6 {pyside_version}"),
+        ],
+        "state": [
+            ("Controller", _controller_line()),
+            ("Global hotkey", _hotkey_line()),
+            ("Spotify", _spotify_line()),
+            ("Log file", _sanitize(logs.log_path())),
+        ],
+        "problems": problems,
+        "problem_total": total,
+        "problems_from_this_run": from_this_run,
+    }
 
-    problems, total = _recent_problems()
+
+def report() -> str:
+    """The full diagnostics text, ready to be shown to the user and then
+    copied. Nothing calls this and copies straight to the clipboard — see
+    settings_window.DiagnosticsPreview for why."""
+    data = report_data()
+
+    lines = [data["title"]]
+    lines += [f"{label}: {value}" for label, value in data["environment"]]
     lines.append("")
+    lines += [f"{label}: {value}" for label, value in data["state"]]
+    lines.append("")
+
+    problems = data["problems"]
+    total = data["problem_total"]
     if not problems:
         lines.append("No warnings or errors logged.")
     else:
@@ -206,7 +430,16 @@ def report() -> str:
             if total > shown
             else f"Warnings/errors ({total}):"
         )
+        if not data["problems_from_this_run"]:
+            # Worth saying out loud: these came out of the log file rather than
+            # from this run, so they are older, and they had the weaker of the
+            # two redaction paths applied to them.
+            header = header[:-1] + ", from before this run:"
         lines.append(header)
-        lines.extend("  " + _redact(line) for line in problems)
+        lines.extend(
+            f"  {problem['when']} {problem['level']} {problem['source']}: "
+            f"{problem['summary']}"
+            for problem in problems
+        )
 
     return "\n".join(lines)

@@ -76,5 +76,7 @@ with `addWidget()`, never `addLayout()`.
 
 You don't need to touch the code. Right-click the tray icon → **Settings…** →
 **Copy diagnostics**, then paste that into the issue. It includes the version,
-your Windows build, and the last few errors, and it deliberately contains no
-tokens or account details.
+your Windows build, and the last few errors. Tokens and account details are
+reported as a yes or a no rather than as values, and the error lines are
+stripped of paths and credential-shaped text, but you get the whole report in
+an editable box before anything is copied, so have a read of it first.

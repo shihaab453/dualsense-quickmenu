@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -67,6 +68,9 @@ QLineEdit { background: rgba(0,0,0,0.35); color: white; border-radius: 8px;
             font-family: 'Consolas', monospace; font-size: 13px; }
 QLineEdit:focus { border: 1px solid #3ddc97; }
 QLineEdit[readOnly="true"] { color: rgba(255,255,255,0.7); }
+QPlainTextEdit { background: rgba(0,0,0,0.35); color: white; border-radius: 8px;
+                 border: 1px solid rgba(255,255,255,0.15); padding: 8px 10px;
+                 font-family: 'Consolas', monospace; font-size: 12px; }
 QPushButton { background: rgba(255,255,255,0.10); color: white;
               border-radius: 8px; padding: 8px 16px; font-size: 13px;
               font-weight: 600; border: none; }
@@ -91,6 +95,69 @@ def _divider() -> QFrame:
     line.setObjectName("divider")
     line.setFixedHeight(1)
     return line
+
+
+class DiagnosticsPreview(QDialog):
+    """Shows the diagnostics report, and only copies it if the user says so.
+
+    Why a preview stands between the button and the clipboard: that report is
+    built to be pasted into a chat with a stranger, and part of it comes from
+    log records whose text this app does not fully control. diagnostics.py
+    redacts what it can recognise, and says plainly that recognising shapes is
+    not the same as a guarantee. The person whose machine it is can recognise
+    one more thing than any pattern can — their own name, their own data — so
+    they get to look first.
+
+    The box is editable and Copy takes what is in the box, so "this line looks
+    like nobody's business" has an answer that isn't "then don't send it".
+    """
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Diagnostics — check before you send it")
+        self.setObjectName("diagnosticsPreview")
+        self.setStyleSheet("#diagnosticsPreview { background: #15151c; }" + _STYLE)
+        self.setMinimumSize(700, 480)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(12)
+
+        title = QLabel("This is what will be copied")
+        title.setObjectName("sectionTitle")
+        lay.addWidget(title)
+
+        hint = QLabel(
+            "Have a read before you paste it anywhere. Anything that looks "
+            "private can be deleted right here — the copy takes whatever is "
+            "in the box below."
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        self._edit = QPlainTextEdit(text)
+        # Wrapped, not scrolled sideways. A long log line running off the
+        # right edge is text the user was asked to check and can't see, which
+        # defeats the only thing this dialog is for.
+        self._edit.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        lay.addWidget(self._edit, 1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        copy_button = QPushButton("Copy to clipboard")
+        copy_button.setObjectName("primary")
+        copy_button.setDefault(True)
+        copy_button.clicked.connect(self.accept)
+        row.addWidget(copy_button)
+        lay.addLayout(row)
+
+    def text(self) -> str:
+        """What the user is actually willing to send, edits included."""
+        return self._edit.toPlainText()
 
 
 class SettingsWindow(QDialog):
@@ -465,8 +532,10 @@ class SettingsWindow(QDialog):
         hint = QLabel(
             "If something doesn't work, press <b>Copy diagnostics</b> and paste "
             "the result into your message — it's a short summary of your setup "
-            "and the last few errors. Nothing is sent anywhere automatically, "
-            "and it contains no passwords or account details."
+            "and the last few errors. You'll see the whole thing and can edit it "
+            "before anything is copied. Nothing is sent anywhere automatically, "
+            "and your Spotify login is reported as a yes or a no, never as a "
+            "client ID or a token."
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
@@ -502,10 +571,20 @@ class SettingsWindow(QDialog):
                 "log.txt yourself before sharing any of it."
             )
             return
+        # Nothing reaches the clipboard until someone has looked at it. See
+        # DiagnosticsPreview for why that is worth a second click.
+        preview = DiagnosticsPreview(text, self)
+        if preview.exec() != QDialog.Accepted:
+            self._diagnostics_status.setText("Nothing was copied.")
+            QTimer.singleShot(15000, lambda: self._diagnostics_status.setText(""))
+            return
+
+        text = preview.text()
         QGuiApplication.clipboard().setText(text)
         line_count = len(text.splitlines())
+        noun = "line" if line_count == 1 else "lines"
         self._diagnostics_status.setText(
-            f"Copied {line_count} lines to your clipboard — paste them into your "
+            f"Copied {line_count} {noun} to your clipboard — paste them into your "
             "message with Ctrl+V."
         )
         # Cleared so a stale "Copied" line doesn't sit there next time the

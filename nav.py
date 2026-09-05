@@ -52,11 +52,16 @@ class RowList:
         """The stored index, clamped to the rows that actually exist now.
 
         Rows change underneath a list that's already on screen: a background
-        load lands, or a page is appended. Between those two moments a
-        controller press can arrive (fit_scroll_to_content pumps the event
-        loop to measure, so this is not hypothetical), and an index left
-        pointing past the end would take the whole app down on the next
-        press."""
+        load lands, or a page is appended. An index left pointing past the end
+        would take the whole app down on the next press.
+
+        This used to be reachable in one step: fit_scroll_to_content() pumped
+        the event loop to measure, so a controller press could be delivered
+        in the middle of a rebuild. That pump is gone (2026-09-05), which
+        makes a rebuild atomic and this clamp defensive rather than
+        load-bearing. Keep it. It costs two comparisons, and it is the
+        difference between a future re-entrancy source being a bug and being
+        a crash."""
         self.index = max(0, min(self.index, len(self.rows) - 1))
         return self.index
 

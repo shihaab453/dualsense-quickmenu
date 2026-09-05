@@ -360,11 +360,15 @@ class _PagedSection:
 
     def render(self, resettle, prefix_rows=(), empty_message="There's nothing in here yet.") -> None:
         """Rebuild this section's rows from current state and hand them to
-        nav. Emptying the nav level *first* is deliberate — see
-        add_rows/fit_scroll_to_content: measuring pumps the Qt event loop,
-        which can deliver a controller press mid-rebuild, and handing that
-        press an empty list rather than one full of about-to-be-deleted
-        widgets is what makes it a safe no-op instead of a crash.
+        nav. Emptying the nav level *first* is deliberate: a press delivered
+        mid-rebuild finds an empty list and no-ops, rather than a list full
+        of about-to-be-deleted widgets, which is a crash. That used to be
+        reachable because measuring pumped the Qt event loop; it isn't any
+        more (see fit_scroll_to_content), so this ordering is now defence in
+        depth rather than the thing standing between you and the bug. Keep
+        it — it costs one line and it is what makes this rebuild safe to call
+        from anywhere, including from inside a future callback that does
+        re-enter.
 
         `prefix_rows` are added unconditionally once loaded, before any
         paged items — Library's synthetic Liked Songs row; pass none for a

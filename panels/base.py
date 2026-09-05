@@ -7,7 +7,6 @@
 from PySide6.QtCore import QPropertyAnimation, QRect, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -282,10 +281,11 @@ def clear_layout(layout) -> None:
             # Unparented as well as deleted. deleteLater() doesn't destroy the
             # widget until control is back in the event loop, and until then it
             # carries on painting exactly where it was — so the rows a rebuild
-            # is replacing show through underneath the new ones. Not
-            # theoretical: rebuilding a list measures itself
-            # (fit_scroll_to_content) and measuring pumps the event loop, so
-            # there is a real repaint inside that window.
+            # is replacing show through underneath the new ones. This was
+            # first hit when measuring pumped the event loop mid-rebuild;
+            # that pump is gone, but unparenting stays, because deleteLater()
+            # still defers destruction to the next event-loop turn and a
+            # repaint before then would show the old rows.
             widget.setParent(None)
             widget.deleteLater()
 
@@ -312,15 +312,32 @@ def fit_scroll_to_content(scroll: QScrollArea, max_height: int = DEFAULT_LIST_MA
     rows so the panel actually grows to fit them, up to max_height, instead
     of rendering squished.
 
-    Newly added row widgets don't report isVisible()==True (and Qt layouts
-    exclude non-visible widgets from sizeHint) until the event loop has
-    processed their pending show events — which hasn't happened yet when
-    rows are added right as the panel first opens. processEvents() forces
-    that to happen immediately instead of measuring too early. (This — and
-    the whole reason this function exists — came out of a real, hard-to-spot
-    bug: see the Phase D Music panel bug-fix history for the full story.)"""
-    QApplication.processEvents()
+    Newly added row widgets are still flagged hidden, and Qt layouts leave
+    hidden widgets out of sizeHint, so measuring straight after adding rows
+    measures an empty list — 18px for a list that wants 242. (This, and the
+    whole reason this function exists, came out of a real, hard-to-spot bug:
+    see the Phase D Music panel bug-fix history for the full story.)
+
+    This used to call QApplication.processEvents() to clear that flag, which
+    worked and was the wrong tool: it re-enters the event loop in the middle
+    of a list rebuild, so a queued controller press or a load completing
+    could run against rows that were half-replaced. Showing each row
+    explicitly clears the same flag with no event loop involved, and measures
+    identically (verified both ways, including with the panel still hidden,
+    which is the normal case — rows get built before the overlay is shown).
+
+    show() here does not put anything on screen. It clears "explicitly
+    hidden"; a row whose parent chain is still hidden stays invisible and
+    simply starts counting toward the layout's sizeHint, which is all this
+    needs."""
     rows_widget = scroll.widget()
+    rows_layout = rows_widget.layout()
+    if rows_layout is not None:
+        for i in range(rows_layout.count()):
+            item = rows_layout.itemAt(i)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.show()
     content_height = rows_widget.sizeHint().height()
     height = min(content_height, max_height)
     # Panel.fit_to_viewport() may temporarily reduce this on a shorter screen.

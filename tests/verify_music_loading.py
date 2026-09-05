@@ -231,12 +231,17 @@ check("an account with no playlists still gets Liked Songs",
 state["playlists"] = PLAYLISTS
 
 print("\n[a press arriving mid-rebuild doesn't corrupt the list]")
-# Rebuilding a list deletes the old row widgets and then measures, and
-# measuring pumps the Qt event loop (fit_scroll_to_content) — so a controller
-# press queued while a refresh was in flight gets delivered halfway through
-# the rebuild, against rows that are already on their way out. Emptying the
-# nav level before the rebuild is what makes that press a no-op; without it
-# the press navigates away mid-rebuild and the library ends up empty.
+# A controller press delivered halfway through a rebuild lands on rows that
+# are already on their way out. Emptying the nav level before the rebuild is
+# what makes that press a no-op; without it the press navigates away
+# mid-rebuild and the library ends up empty.
+#
+# This was originally reachable for real: fit_scroll_to_content() pumped the
+# event loop to measure, so the press arrived on its own. That pump was
+# removed on 2026-09-05, so the scenario is now hypothetical — which is
+# exactly why this test keeps forcing it. The defence is still there, and a
+# test is the only thing that will notice if someone reintroduces a
+# re-entrancy source and it stops working.
 submit.defer = False
 open_panel()                                  # fills the cache
 submit.defer = True

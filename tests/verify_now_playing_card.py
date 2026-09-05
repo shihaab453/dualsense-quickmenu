@@ -146,6 +146,35 @@ card = win._now_playing_card
 win.open_menu()
 app.processEvents()
 
+
+def shows(label, expected: str) -> bool:
+    """Whether `label` is displaying `expected`, tolerating the card's
+    single-line elision.
+
+    Not the same as comparing text() directly. _NowPlayingCard._elide truncates
+    against QFontMetrics of the label's *font*, and the default font is a
+    property of the Qt platform plugin: on the offscreen plugin (a headless
+    runner, or anyone running these with QT_QPA_PLATFORM=offscreen) the same
+    string measures wider than it does on a real desktop, so "Nothing playing"
+    arrives as "Nothing play…" and an equality check fails on a card that is
+    behaving perfectly.
+
+    Deliberately does not call _elide to build the expected string: a test that
+    re-runs the code under test and compares the answer to itself would pass
+    however wrong that code was. This checks the weaker, honest property - the
+    label shows `expected`, or a truncation of it - which is what these callers
+    actually mean. The one check that is specifically *about* elision asserts
+    on text() directly, and should stay that way."""
+    actual = label.text()
+    if actual == expected:
+        return True
+    # The stem has to be non-empty: elidedText returns a bare "…" when the
+    # available width is tiny, and "" is a prefix of everything, so without
+    # this the helper would wave through any expected string at all.
+    stem = actual[:-1]
+    return bool(stem) and actual.endswith("…") and expected.startswith(stem)
+
+
 check("real data reaches the collapsed card", "Test Song" in card._title_label.text())
 check("caption names Spotify when data is real",
       card._caption_label.text() == "Now playing on Spotify")
@@ -160,7 +189,8 @@ win.handle_button("up")
 app.processEvents()
 check("detail becomes visible once selected", card._detail_widget.isVisible())
 check("artist text is populated", "Artist One" in card._artist_label.text())
-check("source text is populated", card._source_label.text() == "From Test Album")
+check("source text is populated", shows(card._source_label, "From Test Album"),
+      f"(got {card._source_label.text()!r})")
 check("the card grows once selected", card.height() > collapsed_height,
       f"(collapsed={collapsed_height}, selected={card.height()})")
 # It used to say "Press □ for Pause", which this check pinned in place even
@@ -230,7 +260,8 @@ sp.forget_login()
 late_callbacks[0](dict(summary))
 app.processEvents()
 check("logout clears the card immediately",
-      card._title_label.text() == "Nothing playing")
+      shows(card._title_label, "Nothing playing"),
+      f"(got {card._title_label.text()!r})")
 check("the queued result cannot repaint old account data",
       card._caption_label.text() == "Spotify"
       and card._title_label.text() != summary["title"])
@@ -239,7 +270,9 @@ print("\n  -- empty state --")
 sp.get_now_playing_summary_async = lambda on_done: on_done(None)
 card.refresh()
 app.processEvents()
-check("no data shows a neutral empty state", card._title_label.text() == "Nothing playing")
+check("no data shows a neutral empty state",
+      shows(card._title_label, "Nothing playing"),
+      f"(got {card._title_label.text()!r})")
 check("caption doesn't claim Spotify when there's nothing to attribute to it",
       card._caption_label.text() == "Spotify")
 check("indicator stops animating in the empty state", card._indicator._playing is False)
@@ -263,7 +296,8 @@ card._refreshing = False
 card.refresh()
 app.processEvents()
 check("so the card still shows the empty state",
-      card._title_label.text() == "Nothing playing")
+      shows(card._title_label, "Nothing playing"),
+      f"(got {card._title_label.text()!r})")
 
 print("\n  -- close_menu() stops the equalizer timer --")
 sp.is_logged_in = lambda: True

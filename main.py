@@ -23,6 +23,16 @@
 import os
 import sys
 
+# Logging is set up here, above the rest of the imports, rather than at the
+# top of main(). Under pythonw.exe there is no console and no stderr, so an
+# ImportError in any of the modules below - a missing PySide6, a broken
+# packaged build - would end the process with nothing written anywhere at all.
+# logs itself only needs the standard library, and its own Qt hook is
+# optional, so it cannot be the thing that fails.
+import logs
+
+logs.setup()
+
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import (
@@ -34,7 +44,6 @@ from PySide6.QtWidgets import (
 
 import diagnostics
 import hotkey
-import logs
 import resources
 import settings
 import settings_window
@@ -207,15 +216,28 @@ def _run_first_launch(tray: QSystemTrayIcon) -> None:
     # Deferred rather than called directly: the tray notification should be on
     # screen before a window steals attention, and Qt hasn't drawn it yet at
     # this point in startup.
-    QTimer.singleShot(1200, settings_window.open_settings)
-    settings.mark_launched()
+    QTimer.singleShot(1200, _finish_first_launch)
+
+
+def _finish_first_launch() -> None:
+    """Open the Settings window, then record that first launch happened.
+
+    The recording is here rather than in _run_first_launch so that it follows
+    the window actually being presented. If anything goes wrong before that -
+    including the write itself failing on an unwritable AppData - the next
+    launch is treated as a first one again, which is the right way round:
+    there is nothing to gain from remembering a welcome the user never saw.
+    """
+    settings_window.open_settings()
+    if not settings.mark_launched():
+        log.warning(
+            "Couldn't record that first launch happened: %s", settings.storage_error()
+        )
 
 
 def main() -> None:
-    # First, before anything that could fail: under pythonw.exe there's no
-    # console, so without this an early crash leaves no trace at all.
-    logs.setup()
-
+    # logs.setup() already ran at import time, above the imports that can
+    # fail. It is idempotent, so nothing here needs to call it again.
     app = QApplication(sys.argv)
 
     if "--selftest" in sys.argv:
@@ -295,6 +317,25 @@ def main() -> None:
     tray_menu.addAction("Quit").triggered.connect(app.quit)
     tray.setContextMenu(tray_menu)
     tray.show()
+
+    # Checked once the tray exists, because the tray is the only way this app
+    # can say anything before a window is opened. Deliberately not fatal: a
+    # machine whose AppData cannot be written still runs the overlay fine, it
+    # just cannot remember anything, and being told that beats changing a
+    # setting and quietly finding it gone next launch. The Settings window
+    # repeats it in a banner, since a tray balloon is gone in seconds.
+    storage_error = settings.check_writable()
+    if storage_error:
+        log.error("Settings cannot be saved: %s", storage_error)
+        tray.showMessage(
+            "Settings can't be saved",
+            f"{storage_error} The app still works, but anything you "
+            f"change, your Spotify login included, is forgotten when it "
+            f"closes. Check that you can write to that folder, and that "
+            f"the drive isn't full.",
+            QIcon(render_app_icon(64)),
+            20000,
+        )
 
     def update_hotkey_registration(result) -> None:
         if result["registered"]:

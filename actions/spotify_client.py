@@ -336,7 +336,18 @@ def _auth_manager(
     client_id = settings.get_spotify_client_id()
     if not client_id:
         raise NotConfigured("No Spotify client ID has been set up yet.")
-    os.makedirs(settings.data_dir(), exist_ok=True)
+    try:
+        os.makedirs(settings.data_dir(), exist_ok=True)
+    except OSError:
+        # An unwritable AppData must not stop someone logging in. The token
+        # simply isn't cached: spotipy's CacheFileHandler logs a warning and
+        # carries on when its write fails, so the login lasts this session and
+        # has to be done again next launch. settings.check_writable() has
+        # already told the user their storage is broken.
+        log.warning(
+            "Couldn't create %s - a Spotify login won't be remembered",
+            settings.data_dir(),
+        )
     generation = (
         login_attempt.generation
         if login_attempt is not None

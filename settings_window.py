@@ -56,6 +56,9 @@ QLabel { color: white; font-family: 'Manrope', 'Segoe UI', sans-serif;
 QLabel#sectionTitle { font-size: 20px; font-weight: 700; }
 QLabel#hint { color: rgba(255,255,255,0.55); font-size: 13px; }
 QLabel#status { color: rgba(255,255,255,0.75); font-size: 13px; }
+QLabel#warning { color: #ffd28a; background: rgba(255,176,60,0.10);
+                 border: 1px solid rgba(255,176,60,0.35); border-radius: 10px;
+                 padding: 10px 12px; font-size: 13px; }
 QFrame#card { background: rgba(255,255,255,0.04); border-radius: 12px;
               border: 1px solid rgba(255,255,255,0.08); }
 QFrame#divider { background: rgba(255,255,255,0.08); }
@@ -127,6 +130,18 @@ class SettingsWindow(QDialog):
         lay = QVBoxLayout(self._root)
         lay.setContentsMargins(28, 24, 28, 24)
         lay.setSpacing(14)
+
+        # Above every section, because it applies to all of them: if the data
+        # folder can't be written, nothing on this window survives a restart.
+        # Hidden unless that is actually the case, so it costs nothing on a
+        # normal machine. The startup tray balloon says the same thing, but a
+        # balloon is gone in seconds and this is the window where someone
+        # changes the settings that then fail to save.
+        self._storage_banner = QLabel()
+        self._storage_banner.setObjectName("warning")
+        self._storage_banner.setWordWrap(True)
+        self._storage_banner.hide()
+        lay.addWidget(self._storage_banner)
 
         self._build_general_section(lay)
         lay.addWidget(_divider())
@@ -245,8 +260,15 @@ class SettingsWindow(QDialog):
     def _on_hotkey_changed(self) -> None:
         if self._loading:
             return
-        settings.set_hotkey_shortcut(self._hotkey_combo.currentData())
-        self._hotkey_status.setText("Saved. Restart the app to apply this shortcut.")
+        saved = settings.set_hotkey_shortcut(self._hotkey_combo.currentData())
+        self._hotkey_status.setText(
+            "Saved. Restart the app to apply this shortcut."
+            if saved
+            else "That shortcut couldn't be saved, so restarting the app "
+            "would go back to the current one. See the warning at the top "
+            "of this window."
+        )
+        self._refresh_storage_banner()
 
     def _on_startup_toggled(self, checked: bool) -> None:
         # Guard against reacting to reload() setting the box programmatically,
@@ -371,12 +393,18 @@ class SettingsWindow(QDialog):
             # A token issued by the old app is useless to the new one, so the
             # cached login has to go with it.
             sp.forget_login()
-        settings.set_spotify_client_id(entered)
-        self._refresh_spotify_status(
-            saved_message="Saved. Open the Music panel to log in."
-            if entered
-            else "Client ID cleared."
-        )
+        # The ID is in force either way; the return says whether it reached
+        # disk. Saying "Saved" when it didn't would send someone hunting for
+        # a bug the next time they start the app and it asks again.
+        saved = settings.set_spotify_client_id(entered)
+        if not saved:
+            message = "Couldn't save that client ID."
+        elif entered:
+            message = "Saved. Open the Music panel to log in."
+        else:
+            message = "Client ID cleared."
+        self._refresh_spotify_status(saved_message=message)
+        self._refresh_storage_banner()
 
     def _log_out(self) -> None:
         # Report a failed deletion rather than claiming a logout that left the
@@ -409,6 +437,14 @@ class SettingsWindow(QDialog):
             state = "No client ID saved yet — Spotify browsing is off."
         elif logged_in:
             state = "Connected to Spotify."
+        elif settings.storage_error():
+            # The ID is in force, so the window must not pretend Spotify is
+            # unconfigured. It also must not say "saved", because it is not.
+            state = (
+                "Client ID set for this session only, since it couldn't "
+                "be written to disk. You'll have to enter it again next "
+                "time the app starts. Open the Music panel to log in."
+            )
         else:
             state = "Client ID saved, but not logged in yet. Open the Music panel to log in."
 
@@ -484,6 +520,26 @@ class SettingsWindow(QDialog):
             log.exception("Couldn't create the log folder %s", folder)
         QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
+    # ---- storage ----
+
+    def _refresh_storage_banner(self) -> None:
+        """Show, or hide, the "nothing here can be saved" warning.
+
+        Called from reload() and after each save, so a write that fails while
+        the window is open is reported then rather than at the next open.
+        """
+        reason = settings.storage_error()
+        if not reason:
+            self._storage_banner.hide()
+            return
+        self._storage_banner.setText(
+            f"Your settings can't be saved. {reason} Everything below "
+            f"still works for as long as the app stays open, but it will "
+            f"be forgotten when you close it. Check that you can write to "
+            f"that folder, and that the drive isn't full."
+        )
+        self._storage_banner.show()
+
     # ---- opening ----
 
     def reload(self) -> None:
@@ -496,6 +552,11 @@ class SettingsWindow(QDialog):
         self._startup_checkbox.setChecked(startup.is_enabled())
         self._loading = False
         self._startup_status.setText("")
+        # Re-tested on every open rather than trusted from startup, so that
+        # someone who has just fixed the folder's permissions sees the warning
+        # go away instead of having to restart the app to find out.
+        settings.check_writable()
+        self._refresh_storage_banner()
         self._refresh_hotkey_status()
         self._refresh_spotify_status()
 

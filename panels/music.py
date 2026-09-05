@@ -20,6 +20,34 @@
 # D-pad — so that state offers a row that closes the overlay and opens the
 # desktop Settings window instead. Once an ID is saved, the normal
 # browser-based login row takes over.
+#
+# --- State layout (2026-09-05 refactor) ---------------------------------
+#
+# Library and Songs used to be ~9 flat attributes each (loader, nav, rows,
+# items, total, offset, loaded, load_failed, paging), hand-copied and kept
+# in sync by convention rather than by anything that enforced it — which is
+# exactly the shape bug #11 (a single "paging" flag shared between both
+# lists, so finishing one request could latch paging off for the other)
+# shipped from. _PagedSection below is that shape given one home instead of
+# two: every mechanic a paged, D-pad-navigable list needs — offset
+# accounting, stale-reply detection (a page reply whose requested offset no
+# longer matches means a fresher reload superseded it), in-place Load More
+# mutation, identity-preserving rebuilds — is written once and used
+# identically by self._library and self._songs, so a future fix to any of
+# that applies to both by construction instead of needing to be re-derived
+# a second time.
+#
+# What's deliberately NOT folded in: fetching page 0. Library's first page
+# is entangled with a login check and the Liked Songs count in a way
+# Songs' isn't (see _start_library_load / _start_songs_load below) — that's
+# real business logic, not duplicated mechanism, so each keeps its own
+# short method rather than being forced through a shared hook for the sake
+# of it. Likewise _login (bridge/in_progress/attempt) and _detail
+# (loader/pending_track/current_track_id/status_pending) group state that
+# always changes together, but their own behavior — starting a login,
+# handling a tile press — stays on MusicPanel: unlike Library/Songs there is
+# no second copy of that behavior to de-duplicate, and every one of those
+# methods already touches panel-owned widgets directly.
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -57,6 +85,9 @@ _PAGE_SIZE = 20
 
 # Liked Songs is a real library entry with no playlist id of its own, so None
 # is already meaningful there and can't double as "no playlist cached yet".
+# Reused below as _PagedSection's default cache_key: only Songs' instance
+# ever compares it against anything (see _open_songs_view), but it lives on
+# both instances since both are the same class.
 _NO_PLAYLIST = object()
 
 _LOAD_FAILED_MESSAGE = "Couldn't reach Spotify. Press Circle and open Music again to retry."
@@ -246,6 +277,261 @@ class _ToggleTile(Tile):
         self.setPixmap(render_icon(self._icon_name, fg, self.ICON_SIZE))
 
 
+# ---- shared row-identity helpers (module-level: no per-panel state needed) --
+
+def _row_identity(row):
+    """What a row *is*, as opposed to where it currently sits. A refresh
+    can add, remove or reorder rows, so restoring by position lands the
+    user somewhere arbitrary; restoring by identity lands them back on the
+    thing they were looking at."""
+    if isinstance(row, _LibraryRow):
+        return ("playlist", row.playlist_id)
+    if isinstance(row, _TrackRow):
+        return ("track", row.track.get("id"))
+    if isinstance(row, _LoadMoreRow):
+        return ("load-more", None)
+    return None
+
+
+def _index_of(rows, identity) -> int:
+    if identity is None:
+        return 0
+    for i, row in enumerate(rows):
+        if _row_identity(row) == identity:
+            return i
+    # It's gone - the playlist was deleted, or the song dropped out of the
+    # list. Falling back to the top is the honest answer; silently landing
+    # on whatever moved into that position is not.
+    return 0
+
+
+def _selected_identity(nav):
+    if nav is None:
+        return None
+    row = nav.selected_row()
+    return None if row is None else _row_identity(row)
+
+
+class _PagedSection:
+    """One paged, D-pad-navigable list's paging state and mechanics: a
+    Loader, the RowList currently pushed for it (or None before it's been
+    opened), the row widgets on screen, the raw entries fetched so far, how
+    many Spotify says exist in total, how many entries have been consumed
+    (not the same as rows displayed — see add_rows), whether the first page
+    has arrived, whether the last fetch failed, and an in-flight "paging"
+    guard. Used identically by MusicPanel's self._library and self._songs.
+
+    cache_key exists for Songs' benefit (which playlist's tracks are these?)
+    and Library's instance simply never reads it — see _open_songs_view.
+    Fetching the *first* page is not here; see the module comment for why.
+    """
+
+    def __init__(self, loader, rows_container, scroll, row_factory, noun: str):
+        self.loader = loader
+        self.rows_container = rows_container
+        self.scroll = scroll
+        self.row_factory = row_factory  # item -> QWidget
+        self.noun = noun  # "playlists" / "songs", for Load More text
+        self.nav = None
+        self.rows = []
+        self.items = []
+        self.total = 0
+        self.offset = 0
+        self.loaded = False
+        self.load_failed = False
+        self.paging = False
+        self.cache_key = _NO_PLAYLIST
+
+    def reset(self) -> None:
+        """Everything except loader and nav, which the owner cancels/empties
+        itself — see MusicPanel._reset_spotify_session for why that ordering
+        (nav emptied before the row container is cleared) has to stay
+        hand-written there rather than folded in here."""
+        self.rows = []
+        self.items = []
+        self.total = 0
+        self.offset = 0
+        self.loaded = False
+        self.load_failed = False
+        self.paging = False
+        self.cache_key = _NO_PLAYLIST
+
+    # ---- rendering ----
+
+    def render(self, resettle, prefix_rows=(), empty_message="There's nothing in here yet.") -> None:
+        """Rebuild this section's rows from current state and hand them to
+        nav. Emptying the nav level *first* is deliberate — see
+        add_rows/fit_scroll_to_content: measuring pumps the Qt event loop,
+        which can deliver a controller press mid-rebuild, and handing that
+        press an empty list rather than one full of about-to-be-deleted
+        widgets is what makes it a safe no-op instead of a crash.
+
+        `prefix_rows` are added unconditionally once loaded, before any
+        paged items — Library's synthetic Liked Songs row; pass none for a
+        section (Songs) with no such row."""
+        keep = _selected_identity(self.nav)
+        if self.nav is not None:
+            self.nav.replace_rows([])
+        clear_layout(self.rows_container)
+        self.rows = []
+        if not self.loaded:
+            message = _LOAD_FAILED_MESSAGE if self.load_failed else "Loading…"
+            self.rows_container.addWidget(message_label(message))
+            fit_scroll_to_content(self.scroll)
+            resettle()
+            return
+
+        self.rows = list(prefix_rows)
+        for widget in prefix_rows:
+            self.rows_container.addWidget(widget)
+
+        if not self.items and not self.rows:
+            # Reachable only by Songs (Library always has a prefix row once
+            # loaded). Checked in the same priority order as the loading
+            # case above so a failed *first* page and a genuinely empty
+            # playlist can't be confused for each other.
+            message = _LOAD_FAILED_MESSAGE if self.load_failed else empty_message
+            self.rows_container.addWidget(message_label(message))
+            fit_scroll_to_content(self.scroll)
+            resettle()
+            return
+
+        self.add_rows(0)
+        if self.nav is not None:
+            self.nav.replace_rows(self.rows, _index_of(self.rows, keep))
+        resettle()
+
+    def add_rows(self, rendered: int) -> None:
+        """Add self.items from `rendered` onward via row_factory, then a
+        Load More row if Spotify says more remain. `rendered` indexes into
+        self.items (entries already turned into rows before this call), not
+        into self.rows — prefix rows (Library's Liked Songs) are not part of
+        that count."""
+        for item in self.items[rendered:]:
+            row = self.row_factory(item)
+            self.rows.append(row)
+            self.rows_container.addWidget(row)
+
+        if self.offset < self.total:
+            more_row = _LoadMoreRow(_load_more_label(self.noun, self.load_failed), self.load_failed)
+            self.rows.append(more_row)
+            self.rows_container.addWidget(more_row)
+
+        fit_scroll_to_content(self.scroll)
+
+    # ---- paging (page 0 excepted - see the module comment) ----
+
+    def page_in_more(self, fetch_more, resettle, on_error=None) -> None:
+        """fetch_more(offset) is the Spotify call for the next page, run on
+        the worker thread. `paging` is an instance attribute, so self._library
+        and self._songs each get their own by construction - the single
+        shared flag that let finishing one list's request re-enable paging
+        for the *other* one can't recur without two objects sharing state
+        they don't actually share."""
+        if self.paging:
+            return  # already fetching; a second press shouldn't queue another
+        self.paging = True
+        if self.rows and isinstance(self.rows[-1], _LoadMoreRow):
+            self.rows[-1].set_label(f"Loading more {self.noun}…")
+        offset = self.offset
+
+        def work():
+            return fetch_more(offset)
+
+        self.loader.start(
+            work, lambda value, error: self._on_page(offset, value, error, resettle, on_error)
+        )
+
+    def _on_page(self, offset, value, error, resettle, on_error) -> None:
+        self.paging = False
+        if offset != self.offset:
+            # The section was reloaded from scratch underneath this page (a
+            # reopen, or a login landing). Appending now would duplicate or
+            # interleave rows, so let the reload's own render stand.
+            return
+        # How many items are already on screen. Since a page can contain
+        # entries that produce no row, this is no longer the same number as
+        # the offset that was requested.
+        rendered = len(self.items)
+        if error is not None:
+            if on_error is not None:
+                on_error(error)
+            self.load_failed = True
+        else:
+            items, total, consumed = value
+            self.load_failed = False
+            self.items.extend(items)
+            self.offset += consumed
+            # A page that returned nothing at all means the collection
+            # really is exhausted. A page that returned entries but no
+            # displayable items is not the end - keep the count Spotify gave
+            # us so the Load More row survives and the next press moves
+            # past them.
+            self.total = total if consumed else len(self.items)
+        selected = self._drop_selected_load_more()
+        self.add_rows(rendered)
+        if self.nav is not None:
+            self.nav.reselect(selected)
+        resettle()
+
+    def _drop_selected_load_more(self) -> int:
+        """Take the pressed Load More row off the end of this list and
+        report the position it held, so the first row of the newly loaded
+        page can take over the selection.
+
+        A page is appended to the RowList already on screen rather than
+        built into a replacement one: rebuilding re-created and re-styled
+        every row each time, so each press cost more than the last (about a
+        second of frozen UI by the thousandth track) — exactly the size of
+        library paging exists to serve."""
+        index = len(self.rows) - 1
+        if self.rows and isinstance(self.rows[-1], _LoadMoreRow):
+            row = self.rows.pop()
+            self.rows_container.removeWidget(row)
+            # deleteLater() alone isn't enough: Qt only destroys the widget
+            # once control is back in the event loop, so until then the row
+            # carries on painting where it was and the first row of the new
+            # page renders on top of it. Unparenting hides it immediately.
+            row.setParent(None)
+            row.deleteLater()
+        return index
+
+
+class _LoginState:
+    """The three fields that only ever change together around one login
+    attempt. Behavior (starting a login, handling the result) stays on
+    MusicPanel - unlike Library/Songs there is exactly one of these, so
+    there is no second copy to de-duplicate, and every method already
+    touches panel-owned widgets (the login row, the status label)."""
+
+    def __init__(self, bridge):
+        self.bridge = bridge
+        self.in_progress = False
+        self.attempt = None
+
+
+class _DetailState:
+    """The reused now-playing view's data: which track it's currently
+    showing, the track handed off from activation to display, the pending
+    status line, and the Loader that refreshes the transport controls.
+
+    is_current() is the one bit of real behavior worth centralizing: every
+    async reply into this view (album art landing, a tile-state refresh, a
+    playback/tile action finishing) must check it before touching a widget,
+    since the view is reused across tracks rather than rebuilt and a slow
+    reply for a track the user already left must not overwrite what they're
+    looking at now."""
+
+    def __init__(self, loader):
+        self.loader = loader
+        self.pending_track = None
+        self.current_track_id = None
+        self.status_pending = ""
+
+    def is_current(self, track_id) -> bool:
+        return track_id == self.current_track_id
+
+
 class MusicPanel(Panel):
     def __init__(self):
         # 1500 matches the design mockup's Music panel — this got left behind
@@ -271,53 +557,44 @@ class MusicPanel(Panel):
         self._build_songs_view()
         self._build_detail_view()
 
-        self._login_bridge = _LoginSignal()
-        self._login_bridge.finished.connect(self._on_login_finished)
-        self._logging_in = False
-        self._login_attempt = None
-        self._pending_track = None
-        self._detail_status_pending = ""
-        self._current_track_id = None
+        self._login = _LoginState(_LoginSignal())
+        self._login.bridge.finished.connect(self._on_login_finished)
+        self._detail = _DetailState(Loader(sp.submit, "music/detail"))
+        # Which playlist the Detail back-label says it came from. Set in
+        # _open_songs_view, read in _show_detail; unrelated to paging
+        # mechanics so it stays flat rather than living on _PagedSection.
         self._current_playlist_name = "Liked Songs"
-        self._liked_songs_total = 0
-        self._library_playlists = []
-        self._library_total = 0
-        self._song_tracks = []
-        self._song_total = 0
-        self._library_load_failed = False
-        self._song_load_failed = False
         self._current_playlist_id = None
-        # Which playlist the cached tracks belong to, so reopening the same
-        # one shows them immediately and reopening a different one doesn't.
-        self._songs_cache_id = _NO_PLAYLIST
-        self._library_loaded = False
-        self._songs_loaded = False
+        self._liked_songs_total = 0
 
         # Nothing in this panel talks to Spotify on the Qt thread. Each
         # loader owns one slot of work and drops results the user has already
         # navigated past — open one playlist, back out, open another, and the
         # first one's songs must not land under the second one's heading.
-        self._library_loader = Loader(sp.submit, "music/library")
-        self._songs_loader = Loader(sp.submit, "music/songs")
-        self._detail_loader = Loader(sp.submit, "music/detail")
+        self._library = _PagedSection(
+            Loader(sp.submit, "music/library"),
+            self._library_rows_container,
+            self._library_scroll,
+            row_factory=lambda pl: _LibraryRow(
+                pl.get("name", "Playlist"),
+                # Spotify's own docs call this field "tracks", but the actual
+                # API response uses "items" — checking both in case that
+                # differs by account or API version.
+                f"{(pl.get('tracks') or pl.get('items') or {}).get('total', 0)} songs",
+                playlist_id=pl.get("id"),
+            ),
+            noun="playlists",
+        )
+        self._songs = _PagedSection(
+            Loader(sp.submit, "music/songs"),
+            self._songs_rows_container,
+            self._songs_scroll,
+            row_factory=_TrackRow,
+            noun="songs",
+        )
         # Presses, not queries. A Loader would drop the first of two quick
         # presses; see the class comment in workers.py.
         self._commands = Commands(sp.submit, "music/commands")
-        # The RowLists currently on the nav stack, kept so a load that
-        # finishes later can fill in the rows they were pushed empty with.
-        self._library_nav = None
-        self._songs_nav = None
-        # One flag shared by two independent lists, reset only on success, was
-        # how paging latched off permanently. Two flags, cleared whenever
-        # their slot restarts.
-        self._library_paging = False
-        self._songs_paging = False
-        # How many entries Spotify has handed over so far, which is not how
-        # many rows are on screen: a removed or unavailable track comes back as
-        # an entry with nothing displayable in it. Paging from the row count
-        # would re-request entries already consumed and show songs twice.
-        self._library_offset = 0
-        self._song_offset = 0
         # Which of the three root views build_nav() settled on. on_enter fires
         # again every time Circle pops back to this level, and by then the
         # answer may have changed (a background login check can turn a
@@ -359,7 +636,6 @@ class MusicPanel(Panel):
         self._library_scroll, self._library_rows_container = make_scrollable_rows()
         lay.addWidget(self._library_scroll)
         self._view_stack.addWidget(self._library_view)
-        self._library_rows = []
 
     def _build_songs_view(self) -> None:
         self._songs_view = QWidget()
@@ -375,7 +651,6 @@ class MusicPanel(Panel):
         self._songs_scroll, self._songs_rows_container = make_scrollable_rows()
         lay.addWidget(self._songs_scroll)
         self._view_stack.addWidget(self._songs_view)
-        self._song_rows = []
 
     def _build_detail_view(self) -> None:
         self._detail_view = QWidget()
@@ -497,7 +772,7 @@ class MusicPanel(Panel):
         self._show_view(self._logged_out_view)
 
     def _show_logged_out(self) -> None:
-        if not self._logging_in:
+        if not self._login.in_progress:
             self._status_label.setText("Log in to control Spotify from here.")
         self._setup_row.hide()
         self._login_row.show()
@@ -510,13 +785,13 @@ class MusicPanel(Panel):
         self._show_view(self._songs_view)
 
     def _show_detail(self) -> None:
-        track = self._pending_track or {}
-        self._current_track_id = track.get("id")
+        track = self._detail.pending_track or {}
+        self._detail.current_track_id = track.get("id")
         self._detail_back_label.setText(f"‹ {self._current_playlist_name}")
         self._detail_title.setText(track.get("name", ""))
         self._detail_explicit_badge.setVisible(bool(track.get("explicit")))
         self._detail_artist.setText(", ".join(a["name"] for a in track.get("artists", [])))
-        self._detail_status.setText(self._detail_status_pending)
+        self._detail_status.setText(self._detail.status_pending)
         self._refresh_tile_states()
         hue = abs(hash(track.get("id") or track.get("name", ""))) % 360
         self._detail_art.setStyleSheet(
@@ -534,7 +809,7 @@ class MusicPanel(Panel):
         # The Detail view is reused across different tracks (not rebuilt),
         # so a slow download for a track the user has since navigated away
         # from must not overwrite whatever's showing now.
-        if pixmap is None or track_id != self._current_track_id:
+        if pixmap is None or not self._detail.is_current(track_id):
             return
         self._detail_art.setStyleSheet("")
         self._detail_art.setPixmap(pixmap)
@@ -543,43 +818,30 @@ class MusicPanel(Panel):
 
     def _reset_spotify_session(self) -> None:
         """Cancel old-account work and erase every account-derived UI value."""
-        self._library_loader.cancel()
-        self._songs_loader.cancel()
-        self._detail_loader.cancel()
+        self._library.loader.cancel()
+        self._songs.loader.cancel()
+        self._detail.loader.cancel()
         self._commands.cancel_all()
-        if self._login_attempt is not None:
-            self._login_attempt.cancel()
-        self._logging_in = False
-        self._login_attempt = None
+        if self._login.attempt is not None:
+            self._login.attempt.cancel()
+        self._login.in_progress = False
+        self._login.attempt = None
         self._login_row.set_text("Log in with Spotify")
 
-        self._pending_track = None
-        self._current_track_id = None
+        self._detail.pending_track = None
+        self._detail.current_track_id = None
         self._current_playlist_id = None
         self._current_playlist_name = "Liked Songs"
-        self._songs_cache_id = _NO_PLAYLIST
         self._liked_songs_total = 0
-        self._library_playlists = []
-        self._library_total = 0
-        self._library_offset = 0
-        self._library_loaded = False
-        self._library_load_failed = False
-        self._library_paging = False
-        self._song_tracks = []
-        self._song_total = 0
-        self._song_offset = 0
-        self._songs_loaded = False
-        self._song_load_failed = False
-        self._songs_paging = False
+        self._library.reset()
+        self._songs.reset()
 
-        if self._library_nav is not None:
-            self._library_nav.replace_rows([])
-        if self._songs_nav is not None:
-            self._songs_nav.replace_rows([])
+        if self._library.nav is not None:
+            self._library.nav.replace_rows([])
+        if self._songs.nav is not None:
+            self._songs.nav.replace_rows([])
         clear_layout(self._library_rows_container)
         clear_layout(self._songs_rows_container)
-        self._library_rows = []
-        self._song_rows = []
 
         self._songs_header.setText("Liked Songs")
         self._detail_back_label.setText("‹ Liked Songs")
@@ -613,23 +875,23 @@ class MusicPanel(Panel):
         settings_window.open_settings()
 
     def _start_login(self) -> None:
-        if self._logging_in:
-            if self._login_attempt is not None and self._login_attempt.cancel():
+        if self._login.in_progress:
+            if self._login.attempt is not None and self._login.attempt.cancel():
                 self._status_label.setText("Cancelling Spotify login...")
             return
-        self._logging_in = True
+        self._login.in_progress = True
         self._login_row.set_text("Cancel Spotify login")
         self._status_label.setText(
             "Opening your browser to log in to Spotify. "
             "Press Cross again to cancel."
         )
-        self._login_attempt = sp.login_async(
-            lambda ok, err: self._login_bridge.finished.emit(ok, err or "")
+        self._login.attempt = sp.login_async(
+            lambda ok, err: self._login.bridge.finished.emit(ok, err or "")
         )
 
     def _on_login_finished(self, ok: bool, err: str) -> None:
-        self._logging_in = False
-        self._login_attempt = None
+        self._login.in_progress = False
+        self._login.attempt = None
         self._login_row.set_text("Log in with Spotify")
         if ok:
             self._status_label.setText("Logged in! Press Circle, then reopen Music.")
@@ -641,12 +903,18 @@ class MusicPanel(Panel):
     def _start_library_load(self) -> None:
         """Fetch the first page of the library in the background. Whatever is
         already on screen (last time's playlists, or nothing at all) stays put
-        until the answer arrives."""
+        until the answer arrives.
+
+        Kept separate from _PagedSection's shared paging (rather than forced
+        through a hook): this one call also has to check the cached login
+        token (a network round trip, which is exactly why it can't happen on
+        the Qt thread that opens the panel) and fetch the Liked Songs count -
+        neither of which Songs' first load needs to do."""
         # This supersedes any page request already queued on the same loader,
         # so that request's callback will never run. Clearing the flag here
         # rather than only in that callback is what stops paging latching on
-        # permanently: see the note on _songs_paging.
-        self._library_paging = False
+        # permanently: see the note on _PagedSection.paging.
+        self._library.paging = False
 
         def work():
             # Doubles as the login check: validating the cached token can
@@ -671,184 +939,69 @@ class MusicPanel(Panel):
                 "consumed": consumed,
             }
 
-        self._library_loader.start(work, self._on_library_loaded)
+        self._library.loader.start(work, self._on_library_loaded)
 
     def _on_library_loaded(self, value, error) -> None:
         if error is not None:
             log.exception(
                 "Couldn't fetch the user's playlists", exc_info=error
             )
-            self._library_load_failed = True
+            self._library.load_failed = True
             self._render_library_rows()
             return
         if value is None:
             self._show_login_prompt()
             return
         self._liked_songs_total = value["liked_total"]
-        self._library_playlists = list(value["playlists"])
-        self._library_offset = value["consumed"]
+        self._library.items = list(value["playlists"])
+        self._library.offset = value["consumed"]
         # An empty first page while `total` still claims there's more would
         # leave a Load More row that can never load anything — trust what
-        # actually came back over the count.
-        self._library_total = (
-            value["total"] if value["playlists"] else len(self._library_playlists)
+        # actually consumed over the count. Fixed here to use `consumed`
+        # (2026-09-05), matching every other paging call site
+        # (_PagedSection._on_page, and this method's own sibling
+        # _on_songs_loaded below) — this one call site was still checking
+        # `value["playlists"]` truthiness, a leftover from before commit
+        # e5b2532 introduced the consumed/displayed distinction and updated
+        # the other three sites but missed this one. A first page that
+        # consumed entries but produced zero displayable playlists (the same
+        # shape of gap the unavailable-track fixture already covers for
+        # tracks) would otherwise have looked like the end of the library
+        # when more was still there to load.
+        self._library.total = (
+            value["total"] if value["consumed"] else len(self._library.items)
         )
-        self._library_loaded = True
-        self._library_load_failed = False
+        self._library.loaded = True
+        self._library.load_failed = False
         self._render_library_rows()
 
     def _show_login_prompt(self) -> None:
         """The cached token turned out to be no good. The level that was
         going to be the library becomes the login prompt instead."""
         self._root_mode = "logged_out"
-        self._library_playlists = []
-        self._library_loaded = False
-        if self._library_nav is not None:
-            self._library_nav.replace_rows([self._login_row])
+        self._library.items = []
+        self._library.loaded = False
+        if self._library.nav is not None:
+            self._library.nav.replace_rows([self._login_row])
         self._show_root_view()
 
-    @staticmethod
-    def _row_identity(row):
-        """What a row *is*, as opposed to where it currently sits. A refresh
-        can add, remove or reorder rows, so restoring by position lands the
-        user somewhere arbitrary; restoring by identity lands them back on the
-        thing they were looking at."""
-        if isinstance(row, _LibraryRow):
-            return ("playlist", row.playlist_id)
-        if isinstance(row, _TrackRow):
-            return ("track", row.track.get("id"))
-        if isinstance(row, _LoadMoreRow):
-            return ("load-more", None)
-        return None
-
-    def _index_of(self, rows, identity) -> int:
-        if identity is None:
-            return 0
-        for i, row in enumerate(rows):
-            if self._row_identity(row) == identity:
-                return i
-        # It's gone - the playlist was deleted, or the song dropped out of the
-        # list. Falling back to the top is the honest answer; silently landing
-        # on whatever moved into that position is not.
-        return 0
-
-    def _selected_identity(self, nav):
-        if nav is None:
-            return None
-        row = nav.selected_row()
-        return None if row is None else self._row_identity(row)
-
     def _render_library_rows(self) -> None:
-        """Rebuild the library list from whatever is currently known, and hand
-        the new rows to the level already on screen.
-
-        Emptying the nav level *first* is deliberate. The rebuild deletes the
-        old row widgets and then measures, and measuring pumps the event loop
-        (see fit_scroll_to_content), which can deliver a controller press
-        mid-rebuild. Handing that press a list of already-deleted rows is a
-        crash; handing it an empty one costs at most a swallowed button."""
-        keep = self._selected_identity(self._library_nav)
-        if self._library_nav is not None:
-            self._library_nav.replace_rows([])
-        clear_layout(self._library_rows_container)
-        self._library_rows = []
-        if not self._library_loaded:
-            # Nothing has arrived yet. A message rather than an empty panel,
-            # and deliberately not a selectable row: there is nowhere for the
-            # D-pad to usefully go until real content arrives. Keyed on
-            # whether the load finished, not on whether it found playlists —
-            # an account with none still has Liked Songs to show.
-            self._library_rows_container.addWidget(
-                message_label(
-                    _LOAD_FAILED_MESSAGE if self._library_load_failed else "Loading…"
-                )
-            )
-            fit_scroll_to_content(self._library_scroll)
-            self._resettle(self._library_view)
-            return
-
         liked_row = _LibraryRow(
             "Liked Songs", f"Playlist · {self._liked_songs_total} songs", playlist_id=None
         )
-        self._library_rows = [liked_row]
-        self._library_rows_container.addWidget(liked_row)
-        self._add_library_rows(0)
-        if self._library_nav is not None:
-            self._library_nav.replace_rows(
-                self._library_rows, self._index_of(self._library_rows, keep)
-            )
-        self._resettle(self._library_view)
-
-    def _add_library_rows(self, rendered: int) -> None:
-        """Add the playlists from `rendered` onward, then a Load More row if
-        the library still has pages left."""
-        for pl in self._library_playlists[rendered:]:
-            name = pl.get("name", "Playlist")
-            # Spotify's own docs call this field "tracks", but the actual
-            # API response uses "items" — checking both in case that
-            # differs by account or API version.
-            tracks_info = pl.get("tracks") or pl.get("items") or {}
-            count = tracks_info.get("total", 0)
-            row = _LibraryRow(name, f"{count} songs", playlist_id=pl.get("id"))
-            self._library_rows.append(row)
-            self._library_rows_container.addWidget(row)
-
-        if self._library_offset < self._library_total:
-            more_row = _LoadMoreRow(
-                _load_more_label("playlists", self._library_load_failed),
-                self._library_load_failed,
-            )
-            self._library_rows.append(more_row)
-            self._library_rows_container.addWidget(more_row)
-
-        fit_scroll_to_content(self._library_scroll)
+        self._library.render(
+            lambda: self._resettle(self._library_view),
+            prefix_rows=[liked_row],
+        )
 
     def _page_in_more_playlists(self) -> None:
-        if self._library_paging:
-            return  # already fetching; a second press shouldn't queue another
-        self._library_paging = True
-        self._set_load_more_state(self._library_rows, "playlists")
-        offset = self._library_offset
-
-        def work():
-            return sp.get_playlists_page(limit=_PAGE_SIZE, offset=offset)
-
-        self._library_loader.start(
-            work, lambda value, error: self._on_playlists_page(offset, value, error)
+        self._library.page_in_more(
+            lambda offset: sp.get_playlists_page(limit=_PAGE_SIZE, offset=offset),
+            lambda: self._resettle(self._library_view),
+            on_error=lambda error: log.exception(
+                "Couldn't fetch the user's playlists", exc_info=error
+            ),
         )
-
-    def _on_playlists_page(self, offset: int, value, error) -> None:
-        self._library_paging = False
-        if offset != self._library_offset:
-            # The library was reloaded from scratch underneath this page (a
-            # reopen, or a login landing). Appending now would duplicate or
-            # interleave rows, so let the reload's own render stand.
-            return
-        # How many playlists are already on screen. Since a page can contain
-        # entries that produce no row, this is no longer the same number as the
-        # offset that was requested.
-        rendered = len(self._library_playlists)
-        if error is not None:
-            log.exception("Couldn't fetch the user's playlists", exc_info=error)
-            self._library_load_failed = True
-        else:
-            playlists, total, consumed = value
-            self._library_load_failed = False
-            self._library_playlists.extend(playlists)
-            self._library_offset += consumed
-            # A page that returned nothing at all means the collection really
-            # is exhausted. A page that returned entries but no displayable
-            # playlists is not the end - keep the count Spotify gave us so the
-            # Load More row survives and the next press moves past them.
-            self._library_total = (
-                total if consumed else len(self._library_playlists)
-            )
-        selected = self._drop_selected_load_more(
-            self._library_rows, self._library_rows_container
-        )
-        self._add_library_rows(rendered)
-        self._library_nav.reselect(selected)
-        self._resettle(self._library_view)
 
     def _open_songs_view(self, playlist_id, playlist_name: str) -> None:
         self._current_playlist_name = playlist_name
@@ -857,13 +1010,13 @@ class MusicPanel(Panel):
         # Reopening the playlist that's still cached shows its songs at once;
         # any other one starts empty rather than briefly showing the wrong
         # playlist's tracks under this one's heading.
-        if self._songs_cache_id != playlist_id:
-            self._song_tracks = []
-            self._song_total = 0
-            self._song_offset = 0
-            self._songs_loaded = False
-        self._song_load_failed = False
-        self._songs_nav = RowList(
+        if self._songs.cache_key != playlist_id:
+            self._songs.items = []
+            self._songs.total = 0
+            self._songs.offset = 0
+            self._songs.loaded = False
+        self._songs.load_failed = False
+        self._songs.nav = RowList(
             [],
             on_activate=self._on_songs_activate,
             on_select=lambda i, row: self._songs_scroll.ensureWidgetVisible(row),
@@ -871,7 +1024,7 @@ class MusicPanel(Panel):
             on_enter=self._show_songs,
         )
         self._render_song_rows()
-        self.nav.push(self._songs_nav)
+        self.nav.push(self._songs.nav)
         self._start_songs_load(playlist_id)
 
     def _on_songs_activate(self, index, row) -> None:
@@ -882,16 +1035,16 @@ class MusicPanel(Panel):
 
     def _start_songs_load(self, playlist_id) -> None:
         # Opening a playlist supersedes any page request still queued for the
-        # previous one, which means _on_songs_page will never run for it. The
-        # flag has to be cleared here as well as there, or leaving a playlist
-        # mid-page leaves this panel unable to page anything for the rest of
-        # the session - which is exactly what happened.
-        self._songs_paging = False
+        # previous one, which means _PagedSection._on_page will never run for
+        # it. The flag has to be cleared here as well as there, or leaving a
+        # playlist mid-page leaves this panel unable to page anything for the
+        # rest of the session - which is exactly what happened.
+        self._songs.paging = False
 
         def work():
             return _fetch_songs_page(playlist_id, 0)
 
-        self._songs_loader.start(
+        self._songs.loader.start(
             work, lambda value, error: self._on_songs_loaded(playlist_id, value, error)
         )
 
@@ -903,141 +1056,41 @@ class MusicPanel(Panel):
             log.exception(
                 "Couldn't fetch tracks for playlist %r", playlist_id, exc_info=error
             )
-            self._song_load_failed = True
+            self._songs.load_failed = True
             self._render_song_rows()
             return
         tracks, total, consumed = value
-        self._song_load_failed = False
-        self._song_tracks = list(tracks)
-        self._song_offset = consumed
-        # See _on_playlists_page: "nothing displayable" and "nothing at all"
+        self._songs.load_failed = False
+        self._songs.items = list(tracks)
+        self._songs.offset = consumed
+        # See _on_library_loaded: "nothing displayable" and "nothing at all"
         # are different answers.
-        self._song_total = total if consumed else len(self._song_tracks)
-        self._songs_cache_id = playlist_id
-        self._songs_loaded = True
+        self._songs.total = total if consumed else len(self._songs.items)
+        self._songs.cache_key = playlist_id
+        self._songs.loaded = True
         self._render_song_rows()
 
     def _render_song_rows(self) -> None:
-        # See _render_library_rows for why the nav level is emptied first.
-        keep = self._selected_identity(self._songs_nav)
-        if self._songs_nav is not None:
-            self._songs_nav.replace_rows([])
-        clear_layout(self._songs_rows_container)
-        self._song_rows = []
-        if not self._song_tracks:
-            if self._song_load_failed:
-                message = _LOAD_FAILED_MESSAGE
-            elif self._songs_loaded:
-                message = "There's nothing in here yet."
-            else:
-                message = "Loading…"
-            self._songs_rows_container.addWidget(message_label(message))
-            fit_scroll_to_content(self._songs_scroll)
-            self._resettle(self._songs_view)
-            return
-        self._add_song_rows(0)
-        if self._songs_nav is not None:
-            self._songs_nav.replace_rows(
-                self._song_rows, self._index_of(self._song_rows, keep)
-            )
-        self._resettle(self._songs_view)
-
-    def _add_song_rows(self, rendered: int) -> None:
-        """Add the tracks from `rendered` onward, then a Load More row if the
-        tracklist still has pages left."""
-        for track in self._song_tracks[rendered:]:
-            row = _TrackRow(track)
-            self._song_rows.append(row)
-            self._songs_rows_container.addWidget(row)
-
-        if self._song_offset < self._song_total:
-            more_row = _LoadMoreRow(
-                _load_more_label("songs", self._song_load_failed),
-                self._song_load_failed,
-            )
-            self._song_rows.append(more_row)
-            self._songs_rows_container.addWidget(more_row)
-
-        fit_scroll_to_content(self._songs_scroll)
+        self._songs.render(lambda: self._resettle(self._songs_view))
 
     def _page_in_more_songs(self) -> None:
-        if self._songs_paging:
-            return
-        self._songs_paging = True
-        self._set_load_more_state(self._song_rows, "songs")
-        offset = self._song_offset
         playlist_id = self._current_playlist_id
-
-        def work():
-            return _fetch_songs_page(playlist_id, offset)
-
-        self._songs_loader.start(
-            work, lambda value, error: self._on_songs_page(offset, value, error)
+        self._songs.page_in_more(
+            lambda offset: _fetch_songs_page(playlist_id, offset),
+            lambda: self._resettle(self._songs_view),
+            on_error=lambda error: log.exception(
+                "Couldn't fetch tracks for playlist %r", playlist_id, exc_info=error
+            ),
         )
-
-    def _on_songs_page(self, offset: int, value, error) -> None:
-        self._songs_paging = False
-        if offset != self._song_offset:
-            # See _on_playlists_page: the list was rebuilt under this page.
-            return
-        rendered = len(self._song_tracks)  # see _on_playlists_page
-        if error is not None:
-            log.exception(
-                "Couldn't fetch tracks for playlist %r",
-                self._current_playlist_id,
-                exc_info=error,
-            )
-            self._song_load_failed = True
-        else:
-            tracks, total, consumed = value
-            self._song_load_failed = False
-            self._song_tracks.extend(tracks)
-            self._song_offset += consumed
-            self._song_total = total if consumed else len(self._song_tracks)
-        selected = self._drop_selected_load_more(
-            self._song_rows, self._songs_rows_container
-        )
-        self._add_song_rows(rendered)
-        self._songs_nav.reselect(selected)
-        self._resettle(self._songs_view)
-
-    def _set_load_more_state(self, rows, noun: str) -> None:
-        """Turn the pressed Load More row into its own loading state, so a
-        press over a slow connection visibly did something."""
-        if rows and isinstance(rows[-1], _LoadMoreRow):
-            rows[-1].set_label(f"Loading more {noun}…")
-
-    def _drop_selected_load_more(self, rows, container) -> int:
-        """Take the pressed Load More row off the end of a paged list and
-        report the position it held, so the first row of the newly loaded page
-        can take over the selection.
-
-        A page is appended to the RowList already on screen rather than built
-        into a replacement one: rebuilding re-created and re-styled every row
-        each time, so each press cost more than the last (about a second of
-        frozen UI by the thousandth track) — exactly the size of library
-        paging exists to serve.
-        """
-        index = len(rows) - 1
-        if rows and isinstance(rows[-1], _LoadMoreRow):
-            row = rows.pop()
-            container.removeWidget(row)
-            # deleteLater() alone isn't enough: Qt only destroys the widget
-            # once control is back in the event loop, so until then the row
-            # carries on painting where it was and the first row of the new
-            # page renders on top of it. Unparenting hides it immediately.
-            row.setParent(None)
-            row.deleteLater()
-        return index
 
     def _on_song_activated(self, index, row) -> None:
         track = row.track
-        self._pending_track = track
+        self._detail.pending_track = track
         # The Detail view opens on the press, not when Spotify answers. Whether
         # playback actually started is reported into the status line underneath
         # once the request comes back — the old order made every song press
         # sit on a blank overlay for a network round trip first.
-        self._detail_status_pending = ""
+        self._detail.status_pending = ""
         uri = track.get("uri")
 
         detail_list = RowList(
@@ -1061,7 +1114,7 @@ class MusicPanel(Panel):
         # on the way out - picking a song and going back to the game is the
         # normal way to use this. Only the *feedback* is conditional, because
         # by now they may be looking at a different song.
-        if track_id != self._current_track_id:
+        if not self._detail.is_current(track_id):
             return
         if error is None:
             self._detail_status.setText("")
@@ -1082,7 +1135,7 @@ class MusicPanel(Panel):
         """Ask Spotify what the transport controls should look like. Two
         network calls, so the tiles keep showing their last state until the
         answer lands rather than the panel waiting on it."""
-        track_id = self._current_track_id
+        track_id = self._detail.current_track_id
 
         def work():
             try:
@@ -1099,7 +1152,7 @@ class MusicPanel(Panel):
                     liked = False
             return playback, liked
 
-        self._detail_loader.start(
+        self._detail.loader.start(
             work, lambda value, error: self._on_tile_states(track_id, value, error)
         )
 
@@ -1108,7 +1161,7 @@ class MusicPanel(Panel):
         # slow answer for a song the user has already left must not repaint
         # the controls for the one they're looking at now — the same guard
         # _on_detail_art_loaded needs, for the same reason.
-        if error is not None or track_id != self._current_track_id:
+        if error is not None or not self._detail.is_current(track_id):
             return
         playback, liked = value
         if playback:
@@ -1133,13 +1186,13 @@ class MusicPanel(Panel):
         if work is None:
             return
         self._detail_status.setText("")
-        track_id = self._current_track_id
+        track_id = self._detail.current_track_id
         self._commands.run(
             work, lambda value, error: self._on_tile_action_done(name, track_id, error)
         )
 
     def _on_tile_action_done(self, name: str, track_id, error) -> None:
-        if track_id != self._current_track_id:
+        if not self._detail.is_current(track_id):
             return  # see _on_playback_started: the press ran, the report is stale
         if error is None:
             self._detail_status.setText("")
@@ -1154,7 +1207,7 @@ class MusicPanel(Panel):
         self._detail_status.setText(_UNAVAILABLE_MESSAGES["other"])
 
     def _toggle_like(self):
-        track_id = self._current_track_id
+        track_id = self._detail.current_track_id
         if not track_id:
             return None
         liked_now = self._like_tile._active
@@ -1163,7 +1216,7 @@ class MusicPanel(Panel):
     def _open_current_in_spotify(self):
         # Handing a URL to Windows, not a Spotify request — it belongs on this
         # thread and there is nothing to run in the background afterwards.
-        if not open_in_spotify(self, self._pending_track or {}):
+        if not open_in_spotify(self, self._detail.pending_track or {}):
             self._detail_status.setText("Couldn't open this song in Spotify.")
         return None
 
@@ -1221,7 +1274,7 @@ class MusicPanel(Panel):
         # the library fetch instead, and the answer either fills the library
         # in or turns this level into the login prompt.
         self._root_mode = "library"
-        self._library_nav = RowList(
+        self._library.nav = RowList(
             [],
             on_activate=self._on_root_activate,
             on_select=lambda i, row: self._library_scroll.ensureWidgetVisible(row),
@@ -1230,7 +1283,7 @@ class MusicPanel(Panel):
         )
         self._render_library_rows()
         self._start_library_load()
-        return self._library_nav
+        return self._library.nav
 
     def _show_root_view(self) -> None:
         """Which view this panel's first nav level is showing. Looked up on

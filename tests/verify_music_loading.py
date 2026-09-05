@@ -161,8 +161,8 @@ print("\n[the panel resizes once the rows arrive]")
 # which point the panel is one "Loading…" line tall. Nothing switches views
 # when the rows land, so without asking for a fresh measurement the list would
 # stay clipped to the height of the placeholder it replaced.
-panel._library_loaded = False
-panel._library_playlists = []
+panel._library.loaded = False
+panel._library.items = []
 submit.defer = True
 open_panel()
 app.processEvents()
@@ -289,8 +289,8 @@ check("and the rebuild still finished correctly",
 state["playlists"] = PLAYLISTS
 
 print("\n[a failed load says so instead of pretending to load]")
-panel._library_loaded = False
-panel._library_playlists = []
+panel._library.loaded = False
+panel._library.items = []
 state["fail"] = True
 open_panel()
 message = visible_message(panel._library_rows_container)
@@ -301,8 +301,8 @@ check("and it tells the user how to retry", message is not None and "again" in m
 state["fail"] = False
 
 print("\n[a stale token turns the library into the login prompt]")
-panel._library_loaded = False
-panel._library_playlists = []
+panel._library.loaded = False
+panel._library.items = []
 state["logged_in"] = False
 open_panel()
 check("the login row is what the D-pad has", rows() == [panel._login_row],
@@ -330,14 +330,14 @@ sp.login_async = lambda callback: (
     login_callbacks.append(callback) or fake_login_attempt
 )
 panel._start_login()
-check("login is marked in progress", panel._logging_in)
+check("login is marked in progress", panel._login.in_progress)
 check("the action changes to cancellation",
       panel._login_row._label.text() == "Cancel Spotify login")
 panel._start_login()
 check("pressing the row again requests cancellation",
       fake_login_attempt.cancel_count == 1)
 login_callbacks[0](False, "Spotify login was cancelled. Press Cross to try again.")
-check("the cancelled login clears its in-progress state", not panel._logging_in)
+check("the cancelled login clears its in-progress state", not panel._login.in_progress)
 check("the login action is restored for retry",
       panel._login_row._label.text() == "Log in with Spotify")
 check("the cancellation result is visible",
@@ -347,21 +347,21 @@ sp.login_async = original_login_async
 print("\n[logout clears account data and cancels stale panel work]")
 state["logged_in"] = True
 submit.defer = True
-panel._library_loaded = False
+panel._library.loaded = False
 panel._start_library_load()
 check("sanity: an old-account load is queued", len(submit.jobs) == 1)
-panel._library_playlists = list(PLAYLISTS)
+panel._library.items = list(PLAYLISTS)
 panel._liked_songs_total = 7
-panel._library_offset = 2
-panel._library_total = 2
-panel._library_loaded = True
-panel._song_tracks = [track(42)]
-panel._song_offset = 1
-panel._song_total = 1
-panel._songs_cache_id = "old-playlist"
-panel._songs_loaded = True
-panel._pending_track = track(42)
-panel._current_track_id = "track42"
+panel._library.offset = 2
+panel._library.total = 2
+panel._library.loaded = True
+panel._songs.items = [track(42)]
+panel._songs.offset = 1
+panel._songs.total = 1
+panel._songs.cache_key = "old-playlist"
+panel._songs.loaded = True
+panel._detail.pending_track = track(42)
+panel._detail.current_track_id = "track42"
 panel._detail_title.setText("Old Account Song")
 panel._detail_artist.setText("Old Account Artist")
 sp._playlist_name_cache["old-playlist"] = "Old Account Playlist"
@@ -370,11 +370,11 @@ art_callbacks = []
 album_art._loader._pending["old-account-url"] = [(36, 8, art_callbacks.append)]
 sp.forget_login()
 check("library metadata is cleared",
-      panel._library_playlists == [] and panel._liked_songs_total == 0)
+      panel._library.items == [] and panel._liked_songs_total == 0)
 check("track metadata is cleared",
-      panel._song_tracks == [] and panel._songs_cache_id is music._NO_PLAYLIST)
+      panel._songs.items == [] and panel._songs.cache_key is music._NO_PLAYLIST)
 check("detail metadata is cleared",
-      panel._pending_track is None and panel._current_track_id is None
+      panel._detail.pending_track is None and panel._detail.current_track_id is None
       and panel._detail_title.text() == "" and panel._detail_artist.text() == "")
 check("module-level playlist names are cleared", sp._playlist_name_cache == {})
 check("decoded album artwork is cleared", len(album_art._cache) == 0)
@@ -385,7 +385,7 @@ check("a late artwork download cannot repopulate the cache",
       "old-account-url" not in album_art._cache)
 submit.run_all()
 check("a queued old-account result cannot refill the library",
-      panel._library_playlists == [], f"(got {panel._library_playlists})")
+      panel._library.items == [], f"(got {panel._library.items})")
 submit.defer = False
 
 print("\n[regressions found by the 2026-09-04 external review]")
@@ -400,9 +400,9 @@ sp.next_track = lambda: presses.append("next")
 submit.defer = True
 open_panel()
 submit.run_all()
-panel._current_track_id = "t1"
-panel._pending_track = {"id": "t1", "name": "T", "uri": "spotify:track:t1",
-                        "artists": [], "album": {"images": []}}
+panel._detail.current_track_id = "t1"
+panel._detail.pending_track = {"id": "t1", "name": "T", "uri": "spotify:track:t1",
+                                "artists": [], "album": {"images": []}}
 submit.defer = True
 panel._on_tile_activated(0, panel._next_tile)
 panel._on_tile_activated(0, panel._next_tile)
@@ -440,15 +440,15 @@ submit.defer = True
 songs = panel.nav.current()
 songs.move(len(songs.rows) - 1)
 songs.activate()                               # ask for C's next page
-check("sanity: that request is in flight", panel._songs_paging)
+check("sanity: that request is in flight", panel._songs.paging)
 panel.nav.pop()                                # leave before it lands
 panel.nav.current().on_enter()
 panel.nav.current().move(1)                    # Playlist D
 panel.nav.current().activate()
 submit.run_all()                               # C's page is superseded, never delivered
 check("abandoning a page request doesn't latch paging off",
-      not panel._songs_paging and not panel._library_paging,
-      f"(songs={panel._songs_paging}, library={panel._library_paging})")
+      not panel._songs.paging and not panel._library.paging,
+      f"(songs={panel._songs.paging}, library={panel._library.paging})")
 
 # The latch didn't make paging slow, it made the panel refuse to ask at all.
 submit.jobs.clear()
@@ -557,5 +557,28 @@ sp.get_playlist_tracks_page = lambda pid, limit=20, offset=0: (
     len(TRACKS[pid]),
     len(TRACKS[pid][offset:offset + limit]),
 )
+
+print("\n[the library's *first* page can also consume entries but show none]")
+# Same shape as "a page containing an unavailable track" above, but for
+# _on_library_loaded specifically. Until the 2026-09-05 state refactor, that
+# one call site still checked `value["playlists"]` truthiness rather than
+# `consumed` - a leftover from before commit e5b2532 introduced the
+# consumed/displayed distinction and updated every *other* paging call site
+# (_on_playlists_page, _on_songs_loaded, and what is now
+# _PagedSection._on_page) but missed this one. A first page that consumed
+# real entries but happened to produce zero displayable playlists looked
+# exactly like an exhausted library, and the Load More row that should have
+# offered the rest of it never appeared.
+sp.get_playlists_page = lambda limit=20, offset=0: ([], 5, 3)
+panel._library.loaded = False
+panel._library.items = []
+open_panel()
+more_rows = [r for r in rows() if isinstance(r, music._LoadMoreRow)]
+check("a Load More row still appears after an all-filtered first page",
+      len(more_rows) == 1, f"(got {len(rows())} rows: {rows()})")
+check("the count Spotify gave (not the empty page) is what's kept",
+      panel._library.total == 5, f"(got {panel._library.total})")
+sp.get_playlists_page = playlists_page
+state["playlists"] = PLAYLISTS
 
 finish()

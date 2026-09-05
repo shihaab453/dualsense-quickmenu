@@ -76,6 +76,7 @@ from panels.base import (
     message_label,
     open_in_spotify,
     selected_row_style,
+    spotify_logo_label,
 )
 
 log = logs.get(__name__)
@@ -130,11 +131,19 @@ class _LibraryRow(QFrame):
     `playlist_id=None` is the sentinel for Liked Songs (its tracks come from
     a different API call than a normal playlist's)."""
 
-    def __init__(self, title: str, subtitle: str, playlist_id):
+    def __init__(self, title: str, subtitle: str, playlist_id, playlist=None):
         super().__init__()
         self.setObjectName("row")
         self.playlist_id = playlist_id
         self.playlist_name = title
+        # The whole playlist dict, kept for its `uri`/`external_urls` the way
+        # _TrackRow keeps its track. This row used to take only the id and
+        # the name, which threw the link away at the point of construction
+        # and left a playlist as the one piece of displayed Spotify metadata
+        # with no way back to Spotify — see _open_songs_view, which offers
+        # it. None for Liked Songs: it is a library section rather than a
+        # playlist and has no page of its own to open.
+        self.playlist = playlist
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(2)
@@ -148,6 +157,15 @@ class _LibraryRow(QFrame):
 
     def set_selected(self, selected: bool) -> None:
         self.setStyleSheet(_row_style(selected))
+
+
+class _OpenPlaylistRow(ActionRow):
+    """The Songs view's way back to the playlist on Spotify.
+
+    Its own class rather than a bare ActionRow so _row_identity can tell it
+    apart: it sits at the top of a list that gets rebuilt under the user by
+    every refresh, and a row the selection can't identify is a row the
+    selection loses track of."""
 
 
 def _fetch_songs_page(playlist_id, offset: int):
@@ -290,19 +308,27 @@ def _row_identity(row):
         return ("track", row.track.get("id"))
     if isinstance(row, _LoadMoreRow):
         return ("load-more", None)
+    if isinstance(row, _OpenPlaylistRow):
+        return ("open-playlist", None)
     return None
 
 
-def _index_of(rows, identity) -> int:
+def _index_of(rows, identity, default: int = 0) -> int:
+    """Where the selection should land. `default` is where to go when there
+    is nothing to restore — normally the top, but a list whose first row is
+    a secondary action (Songs' open-in-Spotify link) passes the index of its
+    first real item instead, so opening a playlist puts the cursor on a song
+    rather than on a link."""
+    fallback = min(default, max(0, len(rows) - 1))
     if identity is None:
-        return 0
+        return fallback
     for i, row in enumerate(rows):
         if _row_identity(row) == identity:
             return i
     # It's gone - the playlist was deleted, or the song dropped out of the
-    # list. Falling back to the top is the honest answer; silently landing
-    # on whatever moved into that position is not.
-    return 0
+    # list. Falling back is the honest answer; silently landing on whatever
+    # moved into that position is not.
+    return fallback
 
 
 def _selected_identity(nav):
@@ -358,7 +384,8 @@ class _PagedSection:
 
     # ---- rendering ----
 
-    def render(self, resettle, prefix_rows=(), empty_message="There's nothing in here yet.") -> None:
+    def render(self, resettle, prefix_rows=(), empty_message="There's nothing in here yet.",
+               default_index: int = 0) -> None:
         """Rebuild this section's rows from current state and hand them to
         nav. Emptying the nav level *first* is deliberate: a press delivered
         mid-rebuild finds an empty list and no-ops, rather than a list full
@@ -402,7 +429,7 @@ class _PagedSection:
 
         self.add_rows(0)
         if self.nav is not None:
-            self.nav.replace_rows(self.rows, _index_of(self.rows, keep))
+            self.nav.replace_rows(self.rows, _index_of(self.rows, keep, default_index))
         resettle()
 
     def add_rows(self, rendered: int) -> None:
@@ -548,6 +575,14 @@ class MusicPanel(Panel):
         # Music's header is smaller than Sound/Power's in the
         # mockup (24px vs 32px) since it sits next to a small app icon.
         self.heading.setStyleSheet("font-size: 24px; font-weight: 700;")
+        # That "small app icon" the mockup leaves room for is the Spotify
+        # mark, and putting it here rather than inside each view is what
+        # attributes the library, the tracklist and the detail view in one
+        # widget - the heading is above the view stack, so it is on screen
+        # whichever of them is showing. _show_view hides it for the
+        # logged-out/setup views, which display no Spotify content.
+        self._spotify_logo = spotify_logo_label(20)
+        self.heading_row.insertWidget(1, self._spotify_logo)
 
         # A QStackedWidget (not setVisible() on 4 sibling widgets in one
         # layout) — it sizes itself to only the *current* page, sidestepping
@@ -569,6 +604,7 @@ class MusicPanel(Panel):
         # mechanics so it stays flat rather than living on _PagedSection.
         self._current_playlist_name = "Liked Songs"
         self._current_playlist_id = None
+        self._current_playlist = None
         self._liked_songs_total = 0
 
         # Nothing in this panel talks to Spotify on the Qt thread. Each
@@ -586,6 +622,7 @@ class MusicPanel(Panel):
                 # differs by account or API version.
                 f"{(pl.get('tracks') or pl.get('items') or {}).get('total', 0)} songs",
                 playlist_id=pl.get("id"),
+                playlist=pl,
             ),
             noun="playlists",
         )
@@ -728,6 +765,11 @@ class MusicPanel(Panel):
     # ---- view switching ----
 
     def _show_view(self, view: QWidget) -> None:
+        # Attribution follows the content, not the panel: the setup and
+        # logged-out views show no Spotify data, only prompts, so the mark
+        # comes off there. Doing it here rather than in each _show_* method
+        # means one place decides, and a view added later can't forget.
+        self._spotify_logo.setVisible(view is not self._logged_out_view)
         self._view_stack.setCurrentWidget(view)
         # Deferred to the next event-loop tick rather than done here and
         # now: right after setCurrentWidget(), Qt hasn't yet finished
@@ -835,6 +877,7 @@ class MusicPanel(Panel):
         self._detail.pending_track = None
         self._detail.current_track_id = None
         self._current_playlist_id = None
+        self._current_playlist = None
         self._current_playlist_name = "Liked Songs"
         self._liked_songs_total = 0
         self._library.reset()
@@ -1007,9 +1050,13 @@ class MusicPanel(Panel):
             ),
         )
 
-    def _open_songs_view(self, playlist_id, playlist_name: str) -> None:
+    def _open_songs_view(self, playlist_id, playlist_name: str, playlist=None) -> None:
         self._current_playlist_name = playlist_name
         self._current_playlist_id = playlist_id
+        # Kept so the Songs view can offer a way back to this playlist on
+        # Spotify. None for Liked Songs, which is a library section rather
+        # than a playlist and has no page to open.
+        self._current_playlist = playlist
         self._songs_header.setText(playlist_name)
         # Reopening the playlist that's still cached shows its songs at once;
         # any other one starts empty rather than briefly showing the wrong
@@ -1032,10 +1079,24 @@ class MusicPanel(Panel):
         self._start_songs_load(playlist_id)
 
     def _on_songs_activate(self, index, row) -> None:
+        if isinstance(row, _OpenPlaylistRow):
+            self._open_playlist_in_spotify()
+            return
         if isinstance(row, _LoadMoreRow):
             self._page_in_more_songs()
             return
         self._on_song_activated(index, row)
+
+    def _open_playlist_in_spotify(self) -> None:
+        """Spotify's guidelines require displayed metadata to link back to
+        the service. Every *track* already does, through the Detail view's
+        open tile; a playlist's name and track count are displayed metadata
+        too, and until this existed they were the one thing on screen with no
+        way back."""
+        if not open_in_spotify(self, self._current_playlist or {}):
+            log.warning(
+                "No Spotify link on playlist %r", self._current_playlist_id
+            )
 
     def _start_songs_load(self, playlist_id) -> None:
         # Opening a playlist supersedes any page request still queued for the
@@ -1075,7 +1136,20 @@ class MusicPanel(Panel):
         self._render_song_rows()
 
     def _render_song_rows(self) -> None:
-        self._songs.render(lambda: self._resettle(self._songs_view))
+        # The link row is offered only when the playlist actually carries a
+        # link (links_for needs a uri or an external_urls entry), so a
+        # library entry without one - Liked Songs - simply doesn't get a row
+        # that would fail when pressed.
+        prefix = []
+        if any(sp.links_for(self._current_playlist or {})):
+            prefix.append(_OpenPlaylistRow(f"Open {self._current_playlist_name} in Spotify"))
+        self._songs.render(
+            lambda: self._resettle(self._songs_view),
+            prefix_rows=prefix,
+            # Land on the first track, not on the link: opening a playlist is
+            # something you do to play a song.
+            default_index=len(prefix),
+        )
 
     def _page_in_more_songs(self) -> None:
         playlist_id = self._current_playlist_id
@@ -1311,4 +1385,6 @@ class MusicPanel(Panel):
         elif isinstance(row, _LoadMoreRow):
             self._page_in_more_playlists()
         else:
-            self._open_songs_view(row.playlist_id, row.playlist_name)
+            self._open_songs_view(
+                row.playlist_id, row.playlist_name, getattr(row, "playlist", None)
+            )

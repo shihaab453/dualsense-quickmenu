@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 import logs
 from actions import spotify_client
-from icons import render_icon
+from icons import render_icon, render_spotify_logo
 
 _log = logs.get(__name__)
 
@@ -109,10 +109,23 @@ class Panel(QFrame):
         # mockup); Music and Now Playing use smaller headers with a leading
         # icon and override self.heading's style after calling super().
         self.heading = None
+        # The title lives in a row rather than as a bare label so a panel can
+        # put a badge beside it — Music and Now Playing both hang the Spotify
+        # mark here, which is how one widget attributes every view inside
+        # those panels instead of each view carrying its own copy. Wrapped in
+        # a real QWidget: a bare addLayout() in this app has repeatedly cached
+        # a stale sizeHint once anything around it resizes (gotcha #3).
+        self.heading_row = None
         if title:
             self.heading = QLabel(title)
             self.heading.setStyleSheet("font-size: 32px; font-weight: 700;")
-            outer.addWidget(self.heading)
+            heading_widget = QWidget()
+            self.heading_row = QHBoxLayout(heading_widget)
+            self.heading_row.setContentsMargins(0, 0, 0, 0)
+            self.heading_row.setSpacing(10)
+            self.heading_row.addWidget(self.heading)
+            self.heading_row.addStretch(1)
+            outer.addWidget(heading_widget)
 
         self.body = QVBoxLayout()
         self.body.setSpacing(10)
@@ -257,6 +270,26 @@ def open_in_spotify(panel, item) -> bool:
         _log.info("Couldn't open %s — trying the next form", target)
     _log.warning("Every Spotify link form failed for %r", item)
     return False
+
+
+def spotify_logo_label(size: int = 22) -> QLabel:
+    """The real Spotify mark, sized and ready to hang next to a panel title.
+
+    Spotify's guidelines require their content to be attributed with their
+    own mark, and require that the mark is never recolored, redrawn or
+    stretched — icons.render_spotify_logo() is the one place that honours
+    that, and this is just the widget wrapper so every view attributes
+    content the same way instead of four near-identical QLabels.
+
+    Attribution is not decoration: hang this where Spotify *content* is on
+    screen, and hide it where it isn't. The Now Playing panel falls back to
+    the Windows media session, so showing the mark unconditionally there
+    would credit Spotify for a track playing in a browser or VLC — which
+    their guidelines specifically prohibit."""
+    label = QLabel()
+    label.setFixedSize(size, size)
+    label.setPixmap(render_spotify_logo(size))
+    return label
 
 
 def message_label(text: str) -> QLabel:

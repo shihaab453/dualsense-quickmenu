@@ -37,6 +37,16 @@ album_art.get = lambda _url, _size, _radius, callback: callback(None)
 # The Detail-view navigation below should never control a real player.
 sp.play_track = lambda _uri: None
 
+SPOTIFY_PLAYLIST = {
+    "id": "37i9dQZF1DXcBWIGoYBM5M",
+    "name": "Today's Top Hits",
+    "uri": "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M",
+    "external_urls": {
+        "spotify": "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+    },
+    "tracks": {"total": 1},
+}
+
 SPOTIFY_TRACK = {
     "id": "4cOdK2wGLETKBW3PvgPWqT",
     "name": "Never Gonna Give You Up",
@@ -55,6 +65,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication
 
 import panels.base as base
+import panels.music as music
 
 opened = []
 QDesktopServices.openUrl = lambda url: (opened.append(url.toString()), True)[1]
@@ -85,6 +96,7 @@ def check_now_playing_spotify():
     check("heading names Spotify", panel.heading.text() == "Now playing on Spotify",
           f"(got {panel.heading.text()!r})")
     check("link row is visible", panel._open_row.isVisible())
+    check("the Spotify mark is shown", panel._spotify_logo.isVisible())
 
     opened.clear()
     overlay.handle_button("cross")   # activate the link row
@@ -113,6 +125,8 @@ def after_fallback():
     check("heading does NOT claim Spotify", panel.heading.text() == "Now playing",
           f"(got {panel.heading.text()!r})")
     check("link row is hidden", not panel._open_row.isVisible())
+    check("and so is the Spotify mark - this track isn't theirs",
+          not panel._spotify_logo.isVisible())
     check("the other player's track still shows",
           "Some Podcast" in panel._song_label.text(),
           f"(got {panel._song_label.text()!r})")
@@ -163,10 +177,84 @@ def after_detail():
     )
     check("its icon renders (not blank)", visible > 0, f"{visible} visible pixels")
 
+    # Both mark checks come before the open-in-Spotify press below, because
+    # that press deliberately closes the overlay - and isVisible() is false
+    # for everything once it does, which would make these pass without
+    # meaning anything.
+    check("Music shows the Spotify mark while browsing their content",
+          panel._spotify_logo.isVisible())
+    panel._show_logged_out()
+    check("and takes it off a view with no Spotify content on it",
+          panel._spotify_logo.isHidden())
+
     opened.clear()
     panel._open_current_in_spotify()
     check("opens the track's spotify: URI", opened[:1] == [SPOTIFY_TRACK["uri"]],
           f"(opened={opened})")
+    overlay.close_menu()
+    QTimer.singleShot(50, check_playlist_link)
+
+
+def check_playlist_link():
+    # A playlist's name and track count are displayed metadata too, and the
+    # library row used to discard the link that would take you back to it.
+    print("\n[Music — a playlist links back to Spotify]")
+    sp.get_playlists_page = lambda limit=20, offset=0: ([SPOTIFY_PLAYLIST], 1, 1)
+    sp.get_playlist_tracks_page = lambda pid, limit=20, offset=0: ([SPOTIFY_TRACK], 1, 1)
+    overlay.open_menu()
+    overlay.handle_button("right")   # music
+    overlay.handle_button("cross")
+    QTimer.singleShot(300, open_the_playlist)
+
+
+def open_the_playlist():
+    overlay.handle_button("down")    # Liked Songs -> the playlist
+    overlay.handle_button("cross")   # open its tracklist
+    QTimer.singleShot(300, after_playlist_open)
+
+
+def after_playlist_open():
+    panel = overlay._active_panel
+    rows = panel.nav.current().rows
+    links = [r for r in rows if isinstance(r, music._OpenPlaylistRow)]
+    check("the playlist offers a way back to Spotify", len(links) == 1,
+          f"(rows={rows})")
+    check("the cursor still lands on a track, not on the link",
+          isinstance(panel.nav.current().selected_row(), music._TrackRow),
+          f"(selected {panel.nav.current().selected_row()})")
+
+    opened.clear()
+    panel.nav.current().move(-1)     # up onto the link row
+    overlay.handle_button("cross")
+    check("opens the playlist's spotify: URI",
+          opened[:1] == [SPOTIFY_PLAYLIST["uri"]], f"(opened={opened})")
+    QTimer.singleShot(50, check_liked_songs)
+
+
+def check_liked_songs():
+    # Liked Songs is a library section rather than a playlist: it has no page
+    # of its own, so offering a link that could only fail would be worse than
+    # offering none.
+    overlay.open_menu()
+    overlay.handle_button("right")
+    overlay.handle_button("cross")
+    QTimer.singleShot(300, open_liked_songs)
+
+
+def open_liked_songs():
+    overlay.handle_button("cross")   # Liked Songs is the first row
+    QTimer.singleShot(300, after_liked_songs)
+
+
+def after_liked_songs():
+    panel = overlay._active_panel
+    rows = panel.nav.current().rows
+    print("\n[Music — Liked Songs has no playlist page to link to]")
+    check("no link row is offered for it",
+          not any(isinstance(r, music._OpenPlaylistRow) for r in rows),
+          f"(rows={rows})")
+    check("its tracks are still listed",
+          any(isinstance(r, music._TrackRow) for r in rows), f"(rows={rows})")
     finish(app)
 
 

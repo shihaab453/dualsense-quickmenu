@@ -16,7 +16,7 @@ from actions import album_art
 from actions import now_playing
 from actions import spotify_client as sp
 from nav import RowList
-from panels.base import ActionRow, Panel, open_in_spotify
+from panels.base import ActionRow, Panel, open_in_spotify, spotify_logo_label
 from workers import MEDIA, Loader
 
 log = logs.get(__name__)
@@ -42,6 +42,16 @@ class NowPlayingPanel(Panel):
         # uninvalidated sizeHint bugs elsewhere in this app (see panels/
         # music.py's Detail-view history); every other panel's rows use a
         # QFrame/QWidget for exactly this reason, so this one does too.
+        # Attribution sits next to the heading, and like the heading text and
+        # the open-in-Spotify row below it, it appears only when the track
+        # actually came from Spotify. This panel falls back to the Windows
+        # media session, so showing the mark unconditionally would credit
+        # Spotify for whatever is playing in a browser or another player -
+        # exactly what their guidelines prohibit. _render() owns the toggle.
+        self._spotify_logo = spotify_logo_label(20)
+        self._spotify_logo.hide()
+        self.heading_row.insertWidget(1, self._spotify_logo)
+
         content_widget = QWidget()
         # Fixed vertical policy: without this, the panel's leftover height
         # (whatever the note label below needs but doesn't get, e.g. once
@@ -230,6 +240,10 @@ class NowPlayingPanel(Panel):
         self.heading.setText(
             "Now playing on Spotify" if track is not None else "Now playing"
         )
+        # The mark follows the same rule as the heading text above and the
+        # link row below: shown for Spotify's content, absent for the
+        # Windows-media-session fallback.
+        self._spotify_logo.setVisible(track is not None)
 
         self._song_label.setText(text)
         track_id = track.get("id") if track is not None else None

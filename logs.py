@@ -12,9 +12,16 @@
 # different places:
 #   sys.excepthook         — uncaught on the main thread, including inside Qt
 #                            slots (PySide6 routes those here)
-#   threading.excepthook   — uncaught on a background thread, and this app has
-#                            four: controller polling, album art fetching, the
-#                            Spotify login flow, and the global hotkey listener
+#   threading.excepthook   — uncaught on a background thread, and this app
+#                            runs several: controller polling, the global
+#                            hotkey listener, the Spotify API worker and the
+#                            two workers.Worker instances (SYSTEM, MEDIA) for
+#                            the whole process, plus one per login attempt and
+#                            one per artwork URL in flight. Deliberately not a
+#                            count — the transient ones make it a moving
+#                            number, and a stale count in a comment is how
+#                            HANDOFF ended up asserting "four" long after it
+#                            stopped being true
 #   qInstallMessageHandler — Qt's own diagnostics (missing plugins, bad
 #                            stylesheets), which are emitted from Qt's C++ side
 #                            and never become Python exceptions at all

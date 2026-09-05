@@ -7,6 +7,7 @@
 
 import threading
 import urllib.request
+from collections import OrderedDict
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap
@@ -23,7 +24,27 @@ log = logs.get(__name__)
 # while art downloads, or the corners visibly jump when it arrives.
 CORNER_RADIUS = 8
 
-_cache: dict[str, QPixmap] = {}  # url -> raw decoded pixmap, not yet scaled/rounded
+# url -> raw decoded pixmap, not yet scaled/rounded. Bounded, and in access
+# order: this app sits in the tray for days, and paging through a large
+# library used to add a pixmap per track and never drop one. A few hundred
+# thumbnails is plenty to keep scrolling smooth without the cache quietly
+# becoming the largest thing in the process.
+_CACHE_LIMIT = 200
+_cache: "OrderedDict[str, QPixmap]" = OrderedDict()
+
+
+def _remember(url: str, pixmap: QPixmap) -> None:
+    _cache[url] = pixmap
+    _cache.move_to_end(url)
+    while len(_cache) > _CACHE_LIMIT:
+        _cache.popitem(last=False)
+
+
+def forget_all() -> None:
+    """Drop every cached image. Called on logout: album art is account-bound
+    data, and the next person to use this machine should not find the previous
+    account's artwork still on screen."""
+    _cache.clear()
 
 
 def smallest_image_url(track: dict):
@@ -74,6 +95,7 @@ class _Loader(QObject):
             return
         raw = _cache.get(url)
         if raw is not None:
+            _cache.move_to_end(url)
             callback(rounded(raw, size, radius))
             return
         already_in_flight = url in self._pending
@@ -100,7 +122,7 @@ class _Loader(QObject):
             if candidate.loadFromData(data):
                 raw = candidate
         if raw is not None:
-            _cache[url] = raw
+            _remember(url, raw)
         for size, radius, callback in self._pending.pop(url, []):
             callback(rounded(raw, size, radius) if raw is not None else None)
 

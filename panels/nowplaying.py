@@ -128,7 +128,14 @@ class NowPlayingPanel(Panel):
         """Spotify's own state if there is any, else the Windows-wide media
         session. Runs on a worker thread, so it must not touch a widget.
 
-        Returns (spotify_track_or_None, fallback_info_or_None)."""
+        Returns (spotify_track_or_None, fallback_info_or_None).
+
+        Both halves still run on the Spotify worker, one after the other, so
+        the Windows fallback waits behind the Spotify attempt it exists to
+        cover for. That is bounded now rather than open-ended (the auth and
+        API calls both have timeouts), but it is still the wrong shape: the
+        two should run on separate workers and the Spotify answer should win
+        when it arrives. Left as an open item rather than half-done here."""
         track = None
         try:
             if sp.is_logged_in():
@@ -141,7 +148,11 @@ class NowPlayingPanel(Panel):
             log.exception("Spotify playback lookup failed; falling back to Windows")
         if track is not None:
             return track, None
-        return None, now_playing.get()
+        try:
+            return None, now_playing.get()
+        except Exception:
+            log.exception("Windows media session lookup failed")
+            return None, None
 
     def build_nav(self):
         # One RowList, filled in when the lookup lands. The open-in-Spotify

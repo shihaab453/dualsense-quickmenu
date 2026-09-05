@@ -126,4 +126,23 @@ check("says so when there are no problems",
       "No warnings or errors logged." in diagnostics.report())
 logs.log_path = _real_log_path
 
+print("\n[a secret that reached the log file]")
+# The checks above plant secrets in the *token file*, which the report never
+# reads. Nothing planted one in a log record, and that was the gap: an
+# external review logged a token, and it came out in the report intact,
+# because redaction only rewrote the home directory. Log text is arbitrary and
+# not under this app's control, so this is a safety net rather than a promise
+# - but the shapes below are the ones that actually turn up.
+log = logs.get("probe")
+log.error("request failed access_token=PLANTED_ACCESS_TOKEN user=someone")
+log.error("Authorization: Bearer PLANTED_BEARER_VALUE")
+log.warning('refresh_token: "PLANTED_REFRESH_VALUE"')
+for handler in logs.logging.getLogger().handlers:
+    handler.flush()
+text = diagnostics.report()
+for planted in ("PLANTED_ACCESS_TOKEN", "PLANTED_BEARER_VALUE", "PLANTED_REFRESH_VALUE"):
+    check(f"{planted} does not survive into the report", planted not in text)
+check("and the surrounding log line is still there to read",
+      "request failed" in text, "(redaction shouldn't blank the whole message)")
+
 finish()

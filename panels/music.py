@@ -552,6 +552,14 @@ class MusicPanel(Panel):
 
     def _start_login(self) -> None:
         if self._logging_in:
+            # An attempt is already waiting on the browser. Say so rather than
+            # appearing to ignore the press - spotipy's local callback server
+            # has no deadline of its own, so an abandoned browser tab leaves
+            # this pending, and the user pressing again deserves an answer.
+            self._status_label.setText(
+                "Still waiting for the Spotify login page. Finish it in your "
+                "browser, or restart the app if you closed it."
+            )
             return
         self._logging_in = True
         self._status_label.setText("Opening your browser to log in to Spotify…")

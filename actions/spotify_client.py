@@ -126,7 +126,42 @@ def _auth_manager() -> SpotifyPKCE:
         scope=SCOPE,
         cache_path=_cache_path(),
         open_browser=True,
+        # spotipy defaults this to None, meaning a token request can wait
+        # forever. That is not hypothetical here: refreshing an expired token
+        # happens inside is_logged_in(), which the overlay calls on the path
+        # that opens a panel, and a stalled request would either freeze the UI
+        # or occupy the single Spotify worker indefinitely. The ordinary API
+        # client has its own five-second default; this is the auth half.
+        requests_timeout=_TOKEN_TIMEOUT_SECONDS,
     )
+
+
+# Long enough not to trip on a slow connection, short enough that a hung
+# endpoint doesn't look like a hung app.
+_TOKEN_TIMEOUT_SECONDS = 10
+
+
+def has_cached_token() -> bool:
+    """Whether there is a cached, unexpired token, judged from disk alone.
+
+    Use this to *describe* login state (the Settings window, the diagnostics
+    report). It never touches the network, which is the point: is_logged_in()
+    calls spotipy's validate_token(), and that refreshes an expired token, so
+    asking "are we logged in?" on the GUI thread could sit on a network round
+    trip. Both of those callers used to do exactly that.
+
+    It is not a substitute for is_logged_in() before actually calling the API,
+    because a token can be revoked server-side while still looking valid here.
+    """
+    if not is_configured():
+        return False
+    try:
+        auth = _auth_manager()
+        token = auth.cache_handler.get_cached_token()
+        return bool(token) and not auth.is_token_expired(token)
+    except Exception:
+        log.exception("Couldn't read the cached Spotify token")
+        return False
 
 
 def is_logged_in() -> bool:
@@ -156,17 +191,36 @@ def links_for(item: dict) -> tuple:
     return app_uri, web_url
 
 
-def forget_login() -> None:
-    """Drops the cached OAuth token and the built client. Called when the
-    client ID changes: a token issued by one Spotify app is meaningless to a
-    different one, so keeping it would produce a confusing "logged in, but
-    every call fails" state instead of a clean prompt to log in again."""
+def forget_login() -> bool:
+    """Drops the cached OAuth token, the built client, and the account-bound
+    caches. Called when the client ID changes and when the user logs out: a
+    token issued by one Spotify app is meaningless to a different one, so
+    keeping it would produce a confusing "logged in, but every call fails"
+    state instead of a clean prompt to log in again.
+
+    Returns whether the token file is actually gone. The caller should say so
+    if it isn't, rather than reporting a logout that left credentials on disk.
+
+    Known gap: this does not cancel work already in flight, so a token refresh
+    that was already running can write the cache again afterwards. That needs
+    a session generation shared by the auth and job layers - see the open
+    logout item."""
     global _client
     _client = None
+    _playlist_name_cache.clear()
+    # Deferred import: album_art doesn't need this module, and importing it at
+    # module level would make that a cycle.
+    from actions import album_art
+
+    album_art.forget_all()
     try:
         os.remove(_cache_path())
-    except OSError:
+    except FileNotFoundError:
         pass  # no token cached — nothing to forget
+    except OSError:
+        log.exception("Couldn't delete the cached Spotify token")
+        return False
+    return True
 
 
 def login_async(on_done) -> None:

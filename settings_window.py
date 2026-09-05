@@ -379,17 +379,29 @@ class SettingsWindow(QDialog):
         )
 
     def _log_out(self) -> None:
-        sp.forget_login()
-        self._refresh_spotify_status(saved_message="Logged out of Spotify.")
+        # Report a failed deletion rather than claiming a logout that left the
+        # token on disk.
+        if sp.forget_login():
+            message = "Logged out of Spotify."
+        else:
+            message = (
+                "Couldn't delete the saved Spotify token — it may still be on "
+                "disk. Check the log folder."
+            )
+        self._refresh_spotify_status(saved_message=message)
 
     def _refresh_spotify_status(self, saved_message: str = "") -> None:
         client_id = settings.get_spotify_client_id()
         self._client_id_field.setText(client_id)
         try:
-            logged_in = sp.is_logged_in()
+            # The local check, not is_logged_in(): this runs while building a
+            # window, and is_logged_in() can go to the network to refresh an
+            # expired token, which would freeze the Settings window for as
+            # long as that took.
+            logged_in = sp.has_cached_token()
         except Exception:
-            # A malformed token cache or a network hiccup shouldn't leave this
-            # window blank — treat it as "not logged in" and say so.
+            # A malformed token cache shouldn't leave this window blank —
+            # treat it as "not logged in" and say so.
             log.exception("Couldn't check Spotify login state for the settings window")
             logged_in = False
 
@@ -444,9 +456,12 @@ class SettingsWindow(QDialog):
             text = diagnostics.report()
         except Exception:
             log.exception("Couldn't build the diagnostics report")
+            # Deliberately no longer suggests sending log.txt. That file has
+            # had no redaction pass at all, so asking a user to hand it over
+            # is asking them to share whatever happened to get logged.
             self._diagnostics_status.setText(
-                "Couldn't gather diagnostics — please send log.txt instead "
-                "(Open log folder)."
+                "Couldn't gather diagnostics. Open the log folder and check "
+                "log.txt yourself before sharing any of it."
             )
             return
         QGuiApplication.clipboard().setText(text)

@@ -61,14 +61,42 @@ def register_hotkey_probe(probe) -> None:
     _hotkey_probe = probe
 
 
+# Things that look like credentials, wherever they turn up in a log line.
+# This is a safety net over text this app does not control, not a promise:
+# anything genuinely secret should never be logged in the first place. An
+# external review put a token into a log record and watched it come out in a
+# diagnostics report intact, which is what these exist to stop.
+_SECRET_PATTERNS = (
+    # key=value and key: value, for the usual credential-ish key names
+    re.compile(
+        r"(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|"
+        r"authorization|api[_-]?key|password|passwd|secret|bearer)"
+        r"(\s*[=:]\s*|\s+)"
+        r"([\"']?)([A-Za-z0-9._~+/\-]{8,})\3"
+    ),
+    # Anything that looks like a bare JWT, which no log line needs to carry.
+    re.compile(r"\beyJ[A-Za-z0-9._\-]{20,}"),
+)
+
+
 def _redact(text: str) -> str:
-    """Replaces the user's home directory with %USERPROFILE%. Log lines carry
-    real filesystem paths, and a Windows username is usually a person's name —
-    this report is meant to be pasted into a group chat."""
+    """Strips what we can recognise as private from text bound for the report:
+    the user's home directory (a Windows username is usually a real name) and
+    anything shaped like a credential.
+
+    Read the limitation before relying on this. It is pattern matching over
+    arbitrary log text, so it catches the shapes below and cannot promise
+    anything about a secret in a shape it has not seen. Treat the report as
+    "checked, not guaranteed" and keep secrets out of log messages."""
     home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-    if not home:
-        return text
-    return re.sub(re.escape(home), "%USERPROFILE%", text, flags=re.IGNORECASE)
+    if home:
+        text = re.sub(re.escape(home), "%USERPROFILE%", text, flags=re.IGNORECASE)
+    for pattern in _SECRET_PATTERNS:
+        if pattern.groups >= 4:
+            text = pattern.sub(r"\1\2\3[redacted]\3", text)
+        else:
+            text = pattern.sub("[redacted]", text)
+    return text
 
 
 def _spotify_line() -> str:
@@ -79,7 +107,10 @@ def _spotify_line() -> str:
     if not configured:
         return "no client ID saved"
     try:
-        return "client ID saved, logged in" if sp.is_logged_in() else (
+        # Deliberately the local, non-refreshing check: this report is what
+        # someone reaches for when things are already broken, so it must not
+        # be able to hang on a network call of its own.
+        return "client ID saved, logged in" if sp.has_cached_token() else (
             "client ID saved, not logged in"
         )
     except Exception:

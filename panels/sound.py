@@ -35,6 +35,24 @@ def _apply_selected_style(frame: QFrame, selected: bool) -> None:
     frame.setStyleSheet(selected_row_style(selected))
 
 
+def _status_label() -> QLabel:
+    """The right-hand "that didn't work" note shared by the two rows that can
+    write. Hidden until something fails, so it costs no layout space in the
+    normal case — Qt leaves hidden widgets out of their layout entirely.
+
+    It exists because a *write* that fails is invisible otherwise. The read
+    failures were given a visible state earlier (a disabled row showing "--"),
+    but a failed SetMasterVolumeLevelScalar or SetMute was only logged, and the
+    refresh that follows it repaints the value that was already there. To the
+    user that is indistinguishable from a press that did nothing, and for the
+    mic mute it is worse than that: they walk away believing they are muted
+    when the microphone is still live."""
+    lbl = QLabel()
+    lbl.setStyleSheet("font-size: 15px; color: #ffb454;")
+    lbl.hide()
+    return lbl
+
+
 def _icon_label(icon_name: str) -> QLabel:
     lbl = QLabel()
     lbl.setPixmap(render_icon(icon_name, "rgba(255,255,255,0.7)", 20))
@@ -133,8 +151,10 @@ class _VolumeRow(QFrame):
         self._label.setStyleSheet("font-size: 20px; font-weight: 600;")
         self._percent = QLabel()
         self._percent.setStyleSheet("font-size: 15px; color: rgba(255,255,255,0.5);")
+        self._status = _status_label()
         label_row.addWidget(self._label)
         label_row.addStretch(1)
+        label_row.addWidget(self._status)
         label_row.addWidget(self._percent)
         lay.addLayout(label_row)
 
@@ -145,6 +165,10 @@ class _VolumeRow(QFrame):
         self.refresh()
 
     def refresh(self) -> None:
+        # Clearing here (rather than in adjust) is what makes reopening the
+        # panel a clean slate: build_nav refreshes every row. adjust() sets
+        # the note *after* calling this, so its own failure survives.
+        self._status.hide()
         try:
             percent = self._get_percent()
         except Exception:
@@ -165,6 +189,13 @@ class _VolumeRow(QFrame):
             self._change_percent(delta)
         except Exception:
             log.exception("Couldn't change a volume level by %s%%", delta)
+            # Re-read first: the level shown must stay the truth (the write
+            # failed, so it is whatever it already was), and only then say
+            # that the press did not take.
+            self.refresh()
+            self._status.setText("Couldn't change")
+            self._status.show()
+            return
         self.refresh()
 
     def set_selected(self, selected: bool) -> None:
@@ -187,13 +218,16 @@ class _ToggleRow(QFrame):
         self._label.setStyleSheet("font-size: 20px; font-weight: 600;")
         self._switch = QLabel()
         self._switch.setFixedSize(44, 24)
+        self._status = _status_label()
         lay.addWidget(self._label)
         lay.addStretch(1)
+        lay.addWidget(self._status)
         lay.addWidget(self._switch)
         _apply_selected_style(self, False)
         self.refresh()
 
     def refresh(self) -> None:
+        self._status.hide()  # see _VolumeRow.refresh
         try:
             on = self._get_state()
         except Exception:
@@ -212,6 +246,14 @@ class _ToggleRow(QFrame):
             self._set_state()
         except Exception:
             log.exception("Couldn't toggle a Sound control (e.g. mic mute)")
+            # The switch keeps showing the real state, which has not changed;
+            # without this note that reads as "the press did nothing", and a
+            # mic the user believes is muted is the one failure here with a
+            # consequence outside the app.
+            self.refresh()
+            self._status.setText("Couldn't switch")
+            self._status.show()
+            return
         self.refresh()
 
     def set_selected(self, selected: bool) -> None:

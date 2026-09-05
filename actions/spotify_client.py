@@ -311,11 +311,13 @@ class NotConfigured(Exception):
 
 
 class PlaybackUnavailable(Exception):
-    """Spotify couldn't service a playback request right now.
+    """Spotify couldn't service a request right now.
 
     reason is one of: "no_device" (nothing is actively playing Spotify
     anywhere), "premium_required" (free accounts can't control playback),
-    "other" (anything else — network hiccup, etc).
+    "playlist_restricted" (the playlist can be seen but its tracks can't be
+    read — see _call's `forbidden` argument), "other" (anything else —
+    network hiccup, etc).
     """
 
     def __init__(self, reason: str):
@@ -559,7 +561,21 @@ def get_client() -> spotipy.Spotify:
         return _client
 
 
-def _call(fn, *args, **kwargs):
+def _call(fn, *args, forbidden: str = "premium_required", **kwargs):
+    """Run one Spotify API call and translate its failures into a
+    PlaybackUnavailable reason.
+
+    `forbidden` is what HTTP 403 means *for this endpoint*, and it is a
+    parameter because the answer is not the same everywhere. For the playback
+    endpoints — the majority, hence the default — 403 means the account is
+    not Premium. For `playlist_items` it does not: since Spotify's February
+    2026 migration, reading a playlist's tracks is limited to playlists the
+    user owns or collaborates on, so a followed or editorial playlist 403s
+    for a Premium user just the same. Reporting that as "premium_required"
+    told the user to buy something they already have.
+
+    `forbidden` is consumed here and never forwarded to `fn`.
+    """
     generation = _context_session_generation()
     _assert_current_session(generation)
     try:
@@ -568,7 +584,7 @@ def _call(fn, *args, **kwargs):
         if e.http_status == 404:
             raise PlaybackUnavailable("no_device") from e
         if e.http_status == 403:
-            raise PlaybackUnavailable("premium_required") from e
+            raise PlaybackUnavailable(forbidden) from e
         raise PlaybackUnavailable("other") from e
     _assert_current_session(generation)
     return result
@@ -772,7 +788,15 @@ def get_playlist_tracks_page(
 ) -> tuple[list, int, int]:
     """One page of a playlist's tracks: (tracks, total, consumed). See
     get_liked_songs_page for why `consumed` is reported separately."""
-    result = _call(get_client().playlist_items, playlist_id, limit=limit, offset=offset)
+    result = _call(
+        get_client().playlist_items,
+        playlist_id,
+        limit=limit,
+        offset=offset,
+        # Not "premium_required": see _call. A playlist the user follows
+        # rather than owns lists fine and then 403s when opened.
+        forbidden="playlist_restricted",
+    )
     # Docs say each item has the track data under "track", but the real
     # response for this endpoint nests it under "item" instead, with
     # "track" left as a true/false type-discriminator (track vs. episode) —

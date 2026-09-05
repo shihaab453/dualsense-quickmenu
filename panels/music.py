@@ -93,9 +93,23 @@ _NO_PLAYLIST = object()
 
 _LOAD_FAILED_MESSAGE = "Couldn't reach Spotify. Press Circle and open Music again to retry."
 
+# Spotify's February 2026 migration limits reading a playlist's *items* to
+# playlists the user owns or collaborates on. A followed or editorial playlist
+# still appears in the library listing, so it lists fine and then fails only
+# when opened. Deliberately says nothing about retrying: unlike every other
+# failure in this panel, this one will never succeed, and the generic message
+# ("Press Circle and open Music again to retry") sent the user round a loop
+# that could not work. Naming Spotify as the place it can be played is the
+# only action actually available.
+_RESTRICTED_PLAYLIST_MESSAGE = (
+    "Spotify only allows playlists you own or collaborate on to be opened "
+    "here. Play this one in the Spotify app."
+)
+
 _UNAVAILABLE_MESSAGES = {
     "no_device": "Open Spotify on this PC or phone to enable playback control.",
     "premium_required": "Playback control requires Spotify Premium.",
+    "playlist_restricted": _RESTRICTED_PLAYLIST_MESSAGE,
     "other": "Couldn't reach Spotify right now.",
 }
 
@@ -176,9 +190,31 @@ def _fetch_songs_page(playlist_id, offset: int):
     return sp.get_playlist_tracks_page(playlist_id, limit=_PAGE_SIZE, offset=offset)
 
 
-def _load_more_label(noun: str, failed: bool) -> str:
+def _restriction_reason(error) -> str | None:
+    """The PlaybackUnavailable reason behind a failed fetch when that reason
+    is a refusal retrying cannot fix, else None. Only "playlist_restricted"
+    qualifies today: "no_device" and "premium_required" are not raised by the
+    listing endpoints, and "other" is the transient bucket."""
+    if isinstance(error, sp.PlaybackUnavailable) and error.reason == "playlist_restricted":
+        return error.reason
+    return None
+
+
+def _failure_message(error) -> str:
+    """What to show in place of a list that couldn't be filled."""
+    reason = _restriction_reason(error)
+    if reason is None:
+        return _LOAD_FAILED_MESSAGE
+    return _UNAVAILABLE_MESSAGES[reason]
+
+
+def _load_more_label(noun: str, failed: bool, permanent: bool = False) -> str:
     """The Load More row's text — pressing it again after a failed page is
-    the retry, so the row says what happened instead of silently no-op'ing."""
+    the retry, so the row says what happened instead of silently no-op'ing.
+    Except when the failure is a refusal (`permanent`), where offering a retry
+    would be inviting the user to press a button that cannot ever work."""
+    if failed and permanent:
+        return f"Spotify won't share the rest of these {noun}"
     if failed:
         return f"Couldn't load more {noun} · press to retry"
     return f"Load more {noun}"
@@ -365,6 +401,12 @@ class _PagedSection:
         self.offset = 0
         self.loaded = False
         self.load_failed = False
+        # Why the message is state rather than a constant: most failures here
+        # are "Spotify was unreachable, try again", but a restricted playlist
+        # is a permanent refusal that needs different words. The owner sets
+        # this alongside load_failed; reset() and every success put it back.
+        self.failed_message = _LOAD_FAILED_MESSAGE
+        self.failed_permanent = False
         self.paging = False
         self.cache_key = _NO_PLAYLIST
 
@@ -379,8 +421,26 @@ class _PagedSection:
         self.offset = 0
         self.loaded = False
         self.load_failed = False
+        self.failed_message = _LOAD_FAILED_MESSAGE
+        self.failed_permanent = False
         self.paging = False
         self.cache_key = _NO_PLAYLIST
+
+    def clear_failure(self) -> None:
+        """Forget the last failure. Called on every success and whenever a
+        section is reopened, so a restriction message from one playlist can't
+        survive onto the next one."""
+        self.load_failed = False
+        self.failed_message = _LOAD_FAILED_MESSAGE
+        self.failed_permanent = False
+
+    def fail(self, error) -> None:
+        """Record a failed fetch and the message it should show. Keeping the
+        translation in one place is what stops the two callers (first page and
+        Load More) drifting into showing different text for one cause."""
+        self.load_failed = True
+        self.failed_message = _failure_message(error)
+        self.failed_permanent = _restriction_reason(error) is not None
 
     # ---- rendering ----
 
@@ -406,7 +466,7 @@ class _PagedSection:
         clear_layout(self.rows_container)
         self.rows = []
         if not self.loaded:
-            message = _LOAD_FAILED_MESSAGE if self.load_failed else "Loading…"
+            message = self.failed_message if self.load_failed else "Loading…"
             self.rows_container.addWidget(message_label(message))
             fit_scroll_to_content(self.scroll)
             resettle()
@@ -421,7 +481,7 @@ class _PagedSection:
             # loaded). Checked in the same priority order as the loading
             # case above so a failed *first* page and a genuinely empty
             # playlist can't be confused for each other.
-            message = _LOAD_FAILED_MESSAGE if self.load_failed else empty_message
+            message = self.failed_message if self.load_failed else empty_message
             self.rows_container.addWidget(message_label(message))
             fit_scroll_to_content(self.scroll)
             resettle()
@@ -444,7 +504,10 @@ class _PagedSection:
             self.rows_container.addWidget(row)
 
         if self.offset < self.total:
-            more_row = _LoadMoreRow(_load_more_label(self.noun, self.load_failed), self.load_failed)
+            more_row = _LoadMoreRow(
+                _load_more_label(self.noun, self.load_failed, self.failed_permanent),
+                self.load_failed,
+            )
             self.rows.append(more_row)
             self.rows_container.addWidget(more_row)
 
@@ -487,10 +550,10 @@ class _PagedSection:
         if error is not None:
             if on_error is not None:
                 on_error(error)
-            self.load_failed = True
+            self.fail(error)
         else:
             items, total, consumed = value
-            self.load_failed = False
+            self.clear_failure()
             self.items.extend(items)
             self.offset += consumed
             # A page that returned nothing at all means the collection
@@ -993,7 +1056,7 @@ class MusicPanel(Panel):
             log.exception(
                 "Couldn't fetch the user's playlists", exc_info=error
             )
-            self._library.load_failed = True
+            self._library.fail(error)
             self._render_library_rows()
             return
         if value is None:
@@ -1019,7 +1082,7 @@ class MusicPanel(Panel):
             value["total"] if value["consumed"] else len(self._library.items)
         )
         self._library.loaded = True
-        self._library.load_failed = False
+        self._library.clear_failure()
         self._render_library_rows()
 
     def _show_login_prompt(self) -> None:
@@ -1066,7 +1129,7 @@ class MusicPanel(Panel):
             self._songs.total = 0
             self._songs.offset = 0
             self._songs.loaded = False
-        self._songs.load_failed = False
+        self._songs.clear_failure()
         self._songs.nav = RowList(
             [],
             on_activate=self._on_songs_activate,
@@ -1121,11 +1184,11 @@ class MusicPanel(Panel):
             log.exception(
                 "Couldn't fetch tracks for playlist %r", playlist_id, exc_info=error
             )
-            self._songs.load_failed = True
+            self._songs.fail(error)
             self._render_song_rows()
             return
         tracks, total, consumed = value
-        self._songs.load_failed = False
+        self._songs.clear_failure()
         self._songs.items = list(tracks)
         self._songs.offset = consumed
         # See _on_library_loaded: "nothing displayable" and "nothing at all"

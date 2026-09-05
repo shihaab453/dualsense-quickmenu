@@ -305,6 +305,107 @@ check("and it tells the user how to retry", message is not None and "again" in m
       f"(got {message!r})")
 state["fail"] = False
 
+print("\n[a playlist Spotify won't open says why, not 'try again']")
+# Spotify's February 2026 migration limits reading a playlist's *items* to
+# playlists the user owns or collaborates on. A followed or editorial playlist
+# is still returned by the library listing, so it lists fine and fails only
+# when opened. Two things were wrong before this: spotify_client._call mapped
+# every 403 to "premium_required", so a Premium user was told to buy Premium;
+# and the panel then showed the generic load failure, which invites a retry
+# that cannot ever succeed.
+restricted_error = sp.PlaybackUnavailable("playlist_restricted")
+tracks_page = sp.get_playlist_tracks_page
+
+
+def refuse(pid, limit=20, offset=0):
+    raise restricted_error
+
+
+def boom(pid, limit=20, offset=0):
+    raise RuntimeError("boom: tracks")
+
+
+def open_playlist_b():
+    """Open Playlist B from a freshly rebuilt library. The cache key is
+    cleared because reopening a still-cached playlist deliberately skips the
+    empty-then-load path these checks are about."""
+    panel._songs.cache_key = music._NO_PLAYLIST
+    open_panel()
+    panel.nav.current().move(2)
+    panel.nav.current().activate()
+
+
+submit.defer = False
+sp.get_playlist_tracks_page = refuse
+open_playlist_b()
+message = visible_message(panel._songs_rows_container)
+check("the restriction is named rather than a generic failure",
+      message is not None and "own or collaborate on" in message,
+      f"(got {message!r})")
+check("it doesn't tell the user to retry something that can't work",
+      message is not None and "retry" not in message.lower(),
+      f"(got {message!r})")
+check("and it points at where the playlist can be played",
+      message is not None and "Spotify app" in message,
+      f"(got {message!r})")
+
+print("\n[an ordinary failure still gets the ordinary message]")
+# Keeps the checks above from being satisfied by a panel that shows the
+# restriction text for every failure: only a refusal drops the retry advice.
+sp.get_playlist_tracks_page = boom
+open_playlist_b()
+message = visible_message(panel._songs_rows_container)
+check("a transient failure keeps the retry wording",
+      message is not None and "Couldn't reach Spotify" in message,
+      f"(got {message!r})")
+
+print("\n[the restriction doesn't stick to the next playlist]")
+# The message is state on the section, not a constant, so a restricted
+# playlist followed by a good one must not leave the refusal under the new
+# heading.
+sp.get_playlist_tracks_page = refuse
+open_playlist_b()
+sp.get_playlist_tracks_page = tracks_page
+open_playlist_b()
+check("a playlist that opens fine shows its tracks",
+      track_names() == ["Track 8", "Track 9"], f"(got {track_names()})")
+check("and no failure survived onto it", not panel._songs.load_failed,
+      f"(got failed={panel._songs.load_failed}, "
+      f"message={panel._songs.failed_message!r})")
+
+print("\n[403 means different things on different endpoints]")
+# The panel behaviour above is only reachable if the client half classifies
+# the refusal correctly, and that mapping had no coverage at all.
+from spotipy.exceptions import SpotifyException
+
+forwarded = {}
+
+
+def forbidden(*_args, **kwargs):
+    forwarded.update(kwargs)
+    raise SpotifyException(403, -1, "forbidden")
+
+
+playback_reason = None
+try:
+    sp._call(forbidden)
+except sp.PlaybackUnavailable as e:
+    playback_reason = e.reason
+check("a 403 on a playback call still means Premium",
+      playback_reason == "premium_required", f"(got {playback_reason!r})")
+
+listing_reason = None
+try:
+    sp._call(forbidden, forbidden="playlist_restricted", limit=20)
+except sp.PlaybackUnavailable as e:
+    listing_reason = e.reason
+check("a 403 reading playlist items means the playlist is restricted",
+      listing_reason == "playlist_restricted", f"(got {listing_reason!r})")
+check("and `forbidden` is consumed, never sent to Spotify as a parameter",
+      "forbidden" not in forwarded and forwarded.get("limit") == 20,
+      f"(got {sorted(forwarded)})")
+
+
 print("\n[a stale token turns the library into the login prompt]")
 panel._library.loaded = False
 panel._library.items = []

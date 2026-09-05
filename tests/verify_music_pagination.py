@@ -85,8 +85,12 @@ class FakeCollection:
             raise RuntimeError("boom: page fetch")
         if self.next_page_empty:
             self.next_page_empty = False
-            return [], len(self.items)
-        return self.items[offset:offset + limit], len(self.items)
+            return [], len(self.items), 0
+        items = self.items[offset:offset + limit]
+        # Third value is entries consumed. Every fixture item here is
+        # displayable, so it equals the item count; verify_music_loading has
+        # the case where it doesn't.
+        return items, len(self.items), len(items)
 
 
 # Small pages so the fixtures stay readable; production uses 20.

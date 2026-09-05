@@ -95,15 +95,20 @@ def playlists_page(limit=20, offset=0):
     if state["fail"]:
         raise RuntimeError("boom: playlists")
     items = state["playlists"]
-    return items[offset:offset + limit], len(items)
+    page = items[offset:offset + limit]
+    return page, len(items), len(page)
 
 
 sp.is_logged_in = lambda: state["logged_in"]
 sp.get_playlists_page = playlists_page
 sp.get_liked_songs_total = lambda: 1
-sp.get_liked_songs_page = lambda limit=20, offset=0: (TRACKS[None], len(TRACKS[None]))
+sp.get_liked_songs_page = lambda limit=20, offset=0: (
+    TRACKS[None], len(TRACKS[None]), len(TRACKS[None])
+)
 sp.get_playlist_tracks_page = lambda pid, limit=20, offset=0: (
-    TRACKS[pid][offset:offset + limit], len(TRACKS[pid])
+    TRACKS[pid][offset:offset + limit],
+    len(TRACKS[pid]),
+    len(TRACKS[pid][offset:offset + limit]),
 )
 
 app = QApplication(sys.argv)
@@ -420,5 +425,60 @@ check("so the card can refresh again afterwards", len(submit.jobs) == 1,
       f"(scheduled {len(submit.jobs)} job(s))")
 submit.jobs.clear()
 submit.defer = False
+
+print("\n[a page containing an unavailable track]")
+# Spotify returns removed or region-blocked entries as an item with no track
+# inside. The client filters those out, and the panel used to advance its
+# offset by the number of rows it got rather than the number of entries
+# Spotify handed over - so the next request overlapped the previous one and
+# the same songs appeared twice.
+# Long enough to need a second page at the real page size. Shrinking
+# _PAGE_SIZE would page the library too and the presses below would land on
+# its "Load more" row - the same trap as the paging-latch test above.
+REAL = [track(n) for n in range(music._PAGE_SIZE + 5)]
+
+
+def gappy_page(pid, limit=20, offset=0):
+    entries = REAL[offset:offset + limit]
+    # The first entry of the first page is unavailable, so it yields no row
+    # while still consuming a slot in Spotify's numbering.
+    displayable = [t for i, t in enumerate(entries) if not (offset == 0 and i == 0)]
+    return displayable, len(REAL), len(entries)
+
+
+TRACKS["pl-gap"] = REAL
+state["playlists"] = PLAYLISTS + [
+    {"id": "pl-gap", "name": "Gappy", "tracks": {"total": len(REAL)}}
+]
+sp.get_playlist_tracks_page = gappy_page
+submit.defer = False
+open_panel()
+nav = panel.nav.current()
+nav.move(3)
+check("sanity: we opened the playlist, not a Load more row",
+      isinstance(nav.selected_row(), music._LibraryRow)
+      and nav.selected_row().playlist_name == "Gappy",
+      f"(selected {nav.selected_row()})")
+nav.activate()
+for _ in range(4):
+    rows_now = panel.nav.current().rows
+    if not rows_now or not isinstance(rows_now[-1], music._LoadMoreRow):
+        break
+    panel.nav.current().move(len(rows_now) - 1)
+    panel.nav.current().activate()
+names = track_names()
+check("no track is listed twice across pages",
+      len(names) == len(set(names)), f"(got {len(names)} rows, {len(set(names))} distinct)")
+check("and paging still reached the end of the playlist",
+      names == [t["name"] for t in REAL[1:]],
+      f"(got {len(names)} of an expected {len(REAL) - 1})")
+
+music._PAGE_SIZE = 20
+state["playlists"] = PLAYLISTS
+sp.get_playlist_tracks_page = lambda pid, limit=20, offset=0: (
+    TRACKS[pid][offset:offset + limit],
+    len(TRACKS[pid]),
+    len(TRACKS[pid][offset:offset + limit]),
+)
 
 finish()

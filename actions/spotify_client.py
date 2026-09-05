@@ -367,15 +367,22 @@ def set_liked(track_id: str, liked: bool) -> None:
         _call(client.current_user_saved_tracks_delete, [track_id])
 
 
-def get_liked_songs_page(limit: int = 20, offset: int = 0) -> tuple[list, int]:
-    """One page of Liked Songs and Spotify's total count for the collection."""
+def get_liked_songs_page(limit: int = 20, offset: int = 0) -> tuple[list, int, int]:
+    """One page of Liked Songs: (tracks, total, consumed).
+
+    `consumed` is how many entries Spotify actually returned, which is not the
+    same as how many are displayable - a removed or unavailable track comes
+    back as an entry with no track in it. The caller must advance its offset by
+    `consumed`, not by `len(tracks)`, or the next request overlaps this one and
+    the same songs appear twice. See _paged_entries."""
     result = _call(get_client().current_user_saved_tracks, limit=limit, offset=offset)
+    entries = result.get("items", [])
     tracks = []
-    for item in result.get("items", []):
+    for item in entries:
         track = item.get("track") if isinstance(item, dict) else None
         if isinstance(track, dict):
             tracks.append(track)
-    return tracks, int(result.get("total", offset + len(tracks)))
+    return tracks, int(result.get("total", offset + len(entries))), len(entries)
 
 
 def get_liked_songs_total() -> int:
@@ -384,16 +391,20 @@ def get_liked_songs_total() -> int:
     return result.get("total", 0)
 
 
-def get_playlists_page(limit: int = 20, offset: int = 0) -> tuple[list, int]:
-    """One page of the user's playlists and Spotify's total count."""
+def get_playlists_page(limit: int = 20, offset: int = 0) -> tuple[list, int, int]:
+    """One page of the user's playlists: (playlists, total, consumed). See
+    get_liked_songs_page for why `consumed` is reported separately."""
     result = _call(get_client().current_user_playlists, limit=limit, offset=offset)
-    playlists = [item for item in result.get("items", []) if isinstance(item, dict)]
-    return playlists, int(result.get("total", offset + len(playlists)))
+    entries = result.get("items", [])
+    playlists = [item for item in entries if isinstance(item, dict)]
+    return playlists, int(result.get("total", offset + len(entries))), len(entries)
 
 
 def get_playlist_tracks_page(
     playlist_id: str, limit: int = 20, offset: int = 0
-) -> tuple[list, int]:
+) -> tuple[list, int, int]:
+    """One page of a playlist's tracks: (tracks, total, consumed). See
+    get_liked_songs_page for why `consumed` is reported separately."""
     result = _call(get_client().playlist_items, playlist_id, limit=limit, offset=offset)
     # Docs say each item has the track data under "track", but the real
     # response for this endpoint nests it under "item" instead, with
@@ -402,14 +413,15 @@ def get_playlist_tracks_page(
     # field ("tracks" vs "items") found earlier. Checking isinstance(...,
     # dict) rather than just truthiness catches that discriminator so it
     # doesn't get mistaken for real track data.
+    entries = result.get("items", [])
     tracks = []
-    for entry in result.get("items", []):
+    for entry in entries:
         track = entry.get("track")
         if not isinstance(track, dict):
             track = entry.get("item")
         if isinstance(track, dict):
             tracks.append(track)
-    return tracks, int(result.get("total", offset + len(tracks)))
+    return tracks, int(result.get("total", offset + len(entries))), len(entries)
 
 
 def play_track(uri: str) -> None:

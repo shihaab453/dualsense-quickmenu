@@ -311,6 +311,12 @@ class MusicPanel(Panel):
         # their slot restarts.
         self._library_paging = False
         self._songs_paging = False
+        # How many entries Spotify has handed over so far, which is not how
+        # many rows are on screen: a removed or unavailable track comes back as
+        # an entry with nothing displayable in it. Paging from the row count
+        # would re-request entries already consumed and show songs twice.
+        self._library_offset = 0
+        self._song_offset = 0
         # Which of the three root views build_nav() settled on. on_enter fires
         # again every time Circle pops back to this level, and by then the
         # answer may have changed (a background login check can turn a
@@ -583,8 +589,15 @@ class MusicPanel(Panel):
                 # the user the whole library.
                 log.exception("Couldn't read the Liked Songs count")
                 liked_total = 0
-            playlists, total = sp.get_playlists_page(limit=_PAGE_SIZE, offset=0)
-            return {"liked_total": liked_total, "playlists": playlists, "total": total}
+            playlists, total, consumed = sp.get_playlists_page(
+                limit=_PAGE_SIZE, offset=0
+            )
+            return {
+                "liked_total": liked_total,
+                "playlists": playlists,
+                "total": total,
+                "consumed": consumed,
+            }
 
         self._library_loader.start(work, self._on_library_loaded)
 
@@ -601,6 +614,7 @@ class MusicPanel(Panel):
             return
         self._liked_songs_total = value["liked_total"]
         self._library_playlists = list(value["playlists"])
+        self._library_offset = value["consumed"]
         # An empty first page while `total` still claims there's more would
         # leave a Load More row that can never load anything — trust what
         # actually came back over the count.
@@ -707,7 +721,7 @@ class MusicPanel(Panel):
             self._library_rows.append(row)
             self._library_rows_container.addWidget(row)
 
-        if len(self._library_playlists) < self._library_total:
+        if self._library_offset < self._library_total:
             more_row = _LoadMoreRow(
                 _load_more_label("playlists", self._library_load_failed),
                 self._library_load_failed,
@@ -722,7 +736,7 @@ class MusicPanel(Panel):
             return  # already fetching; a second press shouldn't queue another
         self._library_paging = True
         self._set_load_more_state(self._library_rows, "playlists")
-        offset = len(self._library_playlists)
+        offset = self._library_offset
 
         def work():
             return sp.get_playlists_page(limit=_PAGE_SIZE, offset=offset)
@@ -733,25 +747,34 @@ class MusicPanel(Panel):
 
     def _on_playlists_page(self, offset: int, value, error) -> None:
         self._library_paging = False
-        if offset != len(self._library_playlists):
+        if offset != self._library_offset:
             # The library was reloaded from scratch underneath this page (a
             # reopen, or a login landing). Appending now would duplicate or
             # interleave rows, so let the reload's own render stand.
             return
+        # How many playlists are already on screen. Since a page can contain
+        # entries that produce no row, this is no longer the same number as the
+        # offset that was requested.
+        rendered = len(self._library_playlists)
         if error is not None:
             log.exception("Couldn't fetch the user's playlists", exc_info=error)
             self._library_load_failed = True
         else:
-            playlists, total = value
+            playlists, total, consumed = value
             self._library_load_failed = False
             self._library_playlists.extend(playlists)
+            self._library_offset += consumed
+            # A page that returned nothing at all means the collection really
+            # is exhausted. A page that returned entries but no displayable
+            # playlists is not the end - keep the count Spotify gave us so the
+            # Load More row survives and the next press moves past them.
             self._library_total = (
-                total if playlists else len(self._library_playlists)
+                total if consumed else len(self._library_playlists)
             )
         selected = self._drop_selected_load_more(
             self._library_rows, self._library_rows_container
         )
-        self._add_library_rows(offset)
+        self._add_library_rows(rendered)
         self._library_nav.reselect(selected)
         self._resettle(self._library_view)
 
@@ -765,6 +788,7 @@ class MusicPanel(Panel):
         if self._songs_cache_id != playlist_id:
             self._song_tracks = []
             self._song_total = 0
+            self._song_offset = 0
             self._songs_loaded = False
         self._song_load_failed = False
         self._songs_nav = RowList(
@@ -810,11 +834,13 @@ class MusicPanel(Panel):
             self._song_load_failed = True
             self._render_song_rows()
             return
-        tracks, total = value
+        tracks, total, consumed = value
         self._song_load_failed = False
         self._song_tracks = list(tracks)
-        # See _on_library_loaded for why an empty page overrides `total`.
-        self._song_total = total if tracks else len(self._song_tracks)
+        self._song_offset = consumed
+        # See _on_playlists_page: "nothing displayable" and "nothing at all"
+        # are different answers.
+        self._song_total = total if consumed else len(self._song_tracks)
         self._songs_cache_id = playlist_id
         self._songs_loaded = True
         self._render_song_rows()
@@ -852,7 +878,7 @@ class MusicPanel(Panel):
             self._song_rows.append(row)
             self._songs_rows_container.addWidget(row)
 
-        if len(self._song_tracks) < self._song_total:
+        if self._song_offset < self._song_total:
             more_row = _LoadMoreRow(
                 _load_more_label("songs", self._song_load_failed),
                 self._song_load_failed,
@@ -867,7 +893,7 @@ class MusicPanel(Panel):
             return
         self._songs_paging = True
         self._set_load_more_state(self._song_rows, "songs")
-        offset = len(self._song_tracks)
+        offset = self._song_offset
         playlist_id = self._current_playlist_id
 
         def work():
@@ -879,9 +905,10 @@ class MusicPanel(Panel):
 
     def _on_songs_page(self, offset: int, value, error) -> None:
         self._songs_paging = False
-        if offset != len(self._song_tracks):
+        if offset != self._song_offset:
             # See _on_playlists_page: the list was rebuilt under this page.
             return
+        rendered = len(self._song_tracks)  # see _on_playlists_page
         if error is not None:
             log.exception(
                 "Couldn't fetch tracks for playlist %r",
@@ -890,14 +917,15 @@ class MusicPanel(Panel):
             )
             self._song_load_failed = True
         else:
-            tracks, total = value
+            tracks, total, consumed = value
             self._song_load_failed = False
             self._song_tracks.extend(tracks)
-            self._song_total = total if tracks else len(self._song_tracks)
+            self._song_offset += consumed
+            self._song_total = total if consumed else len(self._song_tracks)
         selected = self._drop_selected_load_more(
             self._song_rows, self._songs_rows_container
         )
-        self._add_song_rows(offset)
+        self._add_song_rows(rendered)
         self._songs_nav.reselect(selected)
         self._resettle(self._songs_view)
 

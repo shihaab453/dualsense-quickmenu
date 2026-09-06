@@ -73,6 +73,7 @@ class AppSwitcherPanel(Panel):
         self._windows = None
         self._nav = None
         self._failed_switch = ""
+        self._failure_presented = False
         # Its own worker rather than the Spotify one: enumerating windows has
         # nothing to do with Spotify, and opening the switcher shouldn't queue
         # up behind whatever the Music panel last asked for. Enumeration is
@@ -82,6 +83,12 @@ class AppSwitcherPanel(Panel):
         self._loader = Loader(SYSTEM.submit, "appswitcher")
 
     def build_nav(self):
+        # A failed switch closes the overlay before we can report it. Keep
+        # that message throughout the next visit, including its async refresh,
+        # and clear it only on the visit after that one.
+        if self._failure_presented:
+            self._failed_switch = ""
+        self._failure_presented = bool(self._failed_switch)
         self._nav = RowList(
             [],
             on_activate=self._on_activate,
@@ -110,6 +117,7 @@ class AppSwitcherPanel(Panel):
         no-op."""
         self._windows = None
         self._failed_switch = title
+        self._failure_presented = False
         self._render()
 
     def _render(self) -> None:
@@ -128,11 +136,11 @@ class AppSwitcherPanel(Panel):
             self._rows_container.addWidget(
                 message_label(
                     f"Couldn't switch to {self._failed_switch}. It may have "
-                    "closed. This list has been refreshed."
+                    "closed. Choose a window to try again."
                 )
             )
-            self._failed_switch = ""
-        elif self._windows is None:
+        # The message must not displace the fresh, selectable window list.
+        if self._windows is None:
             self._rows_container.addWidget(message_label("Loading…"))
         elif not self._windows:
             self._rows_container.addWidget(

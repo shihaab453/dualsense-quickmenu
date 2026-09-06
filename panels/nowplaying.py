@@ -64,7 +64,7 @@ class NowPlayingPanel(Panel):
         # "Nothing playing" and "Loading…" are this panel's own words and
         # attributing those to Spotify would be crediting them for nothing.
         # _render() owns it.
-        self._spotify_logo = spotify_logo_label(20)
+        self._spotify_logo = spotify_logo_label(22)
         self._spotify_logo.hide()
         self.heading_row.insertWidget(1, self._spotify_logo)
 

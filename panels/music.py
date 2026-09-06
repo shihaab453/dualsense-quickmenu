@@ -644,7 +644,7 @@ class MusicPanel(Panel):
         # widget - the heading is above the view stack, so it is on screen
         # whichever of them is showing. _show_view hides it for the
         # logged-out/setup views, which display no Spotify content.
-        self._spotify_logo = spotify_logo_label(20)
+        self._spotify_logo = spotify_logo_label(22)
         self.heading_row.insertWidget(1, self._spotify_logo)
 
         # A QStackedWidget (not setVisible() on 4 sibling widgets in one

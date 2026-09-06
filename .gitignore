@@ -20,6 +20,7 @@ HANDOFF.md
 # documents, not part of the public repo.
 REVIEW-*.md
 review_probes_*.py
+SPOTIFY-GUIDELINES-REVIEW.md
 
 # Spotify's official brand kit was supplied as a full download (print
 # formats, every color/CMYK/PMS variant) — only the one SVG icons.py actually

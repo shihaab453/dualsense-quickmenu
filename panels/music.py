@@ -476,16 +476,13 @@ class _PagedSection:
         for widget in prefix_rows:
             self.rows_container.addWidget(widget)
 
-        if not self.items and not self.rows:
-            # Reachable only by Songs (Library always has a prefix row once
-            # loaded). Checked in the same priority order as the loading
-            # case above so a failed *first* page and a genuinely empty
-            # playlist can't be confused for each other.
+        if not self.items and self.offset >= self.total and empty_message is not None:
+            # Prefix actions say nothing about whether the collection is
+            # empty. Likewise, a page with no displayable tracks may still
+            # have consumed entries with more to follow. Keep rendering below
+            # so the playlist link and any continuation remain navigable.
             message = self.failed_message if self.load_failed else empty_message
             self.rows_container.addWidget(message_label(message))
-            fit_scroll_to_content(self.scroll)
-            resettle()
-            return
 
         self.add_rows(0)
         if self.nav is not None:
@@ -1102,6 +1099,7 @@ class MusicPanel(Panel):
         self._library.render(
             lambda: self._resettle(self._library_view),
             prefix_rows=[liked_row],
+            empty_message=None,  # Liked Songs remains useful without playlists.
         )
 
     def _page_in_more_playlists(self) -> None:

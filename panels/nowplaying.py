@@ -103,6 +103,26 @@ class NowPlayingPanel(Panel):
         content_row.addWidget(self._song_label, 0, Qt.AlignVCenter)
         self.body.addWidget(content_widget)
 
+        # What the track is playing *from* - an album title or a playlist
+        # name. The home card shows this too but truncates it to one line,
+        # and unlike the title and artist it had nowhere to be read in full:
+        # opening this panel showed the same metadata minus the source
+        # entirely. Spotify's guidelines allow truncating displayed metadata
+        # only where full viewing capability exists somewhere, so this is
+        # where the card's third line becomes readable.
+        #
+        # A direct child of `body` (a plain QVBoxLayout), deliberately not
+        # inside content_row: that HBox already has one word-wrapped label
+        # negotiating height against a fixed-size sibling, which is the
+        # arrangement the comment above says corrupted itself once.
+        self._source_label = QLabel()
+        self._source_label.setWordWrap(True)
+        self._source_label.setStyleSheet(
+            "font-size: 15px; color: rgba(255,255,255,0.55);"
+        )
+        self._source_label.hide()
+        self.body.addWidget(self._source_label)
+
         self._current_art_id = None
         self._current_track = None
         # What the last look found, so reopening the panel shows it at once
@@ -170,11 +190,20 @@ class NowPlayingPanel(Panel):
 
     @staticmethod
     def _look_up_spotify():
-        """Return Spotify's current track, or None, without touching widgets."""
+        """Return (track, source_name) for Spotify's current playback, or
+        None, without touching widgets.
+
+        resolve_context_name costs a real API call for a playlist and never
+        raises - a lookup failure just means no name - so the source is
+        best-effort and its absence is not an error. It is resolved here, on
+        the worker thread, because it is a network round trip like the
+        playback read it accompanies."""
         if not sp.is_logged_in():
             return None
         playback = sp.get_current_playback()
-        return playback.get("item") if playback else None
+        if not playback or not playback.get("item"):
+            return None
+        return playback["item"], sp.resolve_context_name(playback)
 
     @staticmethod
     def _look_up_winrt():
@@ -214,9 +243,10 @@ class NowPlayingPanel(Panel):
                 exc_info=error,
             )
             value = None
-        self._spotify_track = value
-        if value is not None:
-            self._apply_lookup_result(value, None)
+        track, source = value if value is not None else (None, None)
+        self._spotify_track = track
+        if track is not None:
+            self._apply_lookup_result(track, None, source)
         elif not self._winrt_pending:
             self._apply_lookup_result(None, self._winrt_info)
 
@@ -231,7 +261,7 @@ class NowPlayingPanel(Panel):
         ):
             self._apply_lookup_result(None, value)
 
-    def _apply_lookup_result(self, track, info) -> None:
+    def _apply_lookup_result(self, track, info, source=None) -> None:
         if track is not None:
             text = track.get("name") or "(unknown title)"
             artists = ", ".join(a["name"] for a in track.get("artists", []))
@@ -251,10 +281,11 @@ class NowPlayingPanel(Panel):
         showing_content = track is not None or bool(
             info and (info["title"] or info["artist"])
         )
-        self._last_result = (text, track, showing_content)
-        self._render(text, track, showing_content)
+        self._last_result = (text, track, showing_content, source)
+        self._render(text, track, showing_content, source)
 
-    def _render(self, text: str, track, showing_content: bool = False) -> None:
+    def _render(self, text: str, track, showing_content: bool = False,
+                source: str | None = None) -> None:
         # Heading, mark and link row all key off showing_content rather than
         # `track is not None`. Before actions/now_playing.py filtered by
         # owning application, the fallback could be another player's track and
@@ -270,6 +301,12 @@ class NowPlayingPanel(Panel):
         self._spotify_logo.setVisible(showing_content)
 
         self._song_label.setText(text)
+        # Hidden rather than blank when there is nothing to say: Liked Songs,
+        # a single queued track and Spotify radio are all indistinguishable
+        # from the API and legitimately have no source, and an empty row
+        # would just be dead space. The media-session path has none either.
+        self._source_label.setText(f"From {source}" if source else "")
+        self._source_label.setVisible(bool(source))
         track_id = track.get("id") if track is not None else None
         self._current_art_id = track_id
         self._reset_art_placeholder()

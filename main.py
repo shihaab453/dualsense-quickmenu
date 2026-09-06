@@ -162,9 +162,10 @@ def _selftest() -> int:
     except Exception as e:
         check("pydualsense + hidapi.dll load", False, f"{type(e).__name__}: {e}")
 
-    # winrt powers the Now Playing fallback for non-Spotify players, and
-    # actions/now_playing.py deliberately swallows its ImportError — so if
-    # PyInstaller misses it, the feature just quietly stops existing.
+    # winrt powers the Now Playing fallback — reading Spotify's own Windows
+    # media session, which is what still works when the Web API can't answer.
+    # actions/now_playing.py deliberately swallows its ImportError, so if
+    # PyInstaller misses it the feature just quietly stops existing.
     from actions import now_playing
     check("winrt media session available", now_playing._AVAILABLE)
 

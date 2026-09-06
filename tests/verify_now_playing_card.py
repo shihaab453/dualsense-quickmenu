@@ -375,22 +375,33 @@ spotify_held.run_all()
 spotify_held.defer = False
 winrt_held.defer = False
 
-# Nothing on Spotify: the panel falls back to whatever Windows reports, and
-# must not claim that came from Spotify.
+# The Web API has nothing, so the panel falls back to the Windows media
+# session. Since 2026-09-06 that reading is Spotify-only (actions/now_playing
+# filters by the session's owning application), so what arrives here is
+# Spotify's content read a different way - and it has to be attributed, not
+# hidden. These three checks asserted the opposite before that change, when
+# the fallback could be a browser.
 sp.get_current_playback = lambda: None
-_now_playing.get = lambda: {"title": "Some Podcast", "artist": "Not Spotify"}
+_now_playing.get = lambda: {"title": "Clair de Lune", "artist": "Debussy"}
 panel.build_nav()
 check("it falls back to the Windows media session",
-      "Some Podcast" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
-check("without attributing it to Spotify",
-      panel.heading.text() == "Now playing", f"(got {panel.heading.text()!r})")
-check("and without offering an open-in-Spotify row",
-      panel._nav.rows == [], f"(got {panel._nav.rows})")
+      "Clair de Lune" in panel._song_label.text(), f"(got {panel._song_label.text()!r})")
+check("and attributes it, because that reading is Spotify-only now",
+      panel.heading.text() == "Now playing on Spotify",
+      f"(got {panel.heading.text()!r})")
+check("and offers a link back to the service",
+      len(panel._nav.rows) == 1, f"(got {panel._nav.rows})")
 
+# A browser or another player owning the session: now_playing.get() returns
+# None for those, so this is also what "something else is playing" looks like.
+# The other service's track never reaches the screen at all.
 _now_playing.get = lambda: None
 panel.build_nav()
 check("nothing playing anywhere says so",
       panel._song_label.text() == "Nothing playing", f"(got {panel._song_label.text()!r})")
+check("with no attribution, since there is no Spotify content",
+      panel.heading.text() == "Now playing", f"(got {panel.heading.text()!r})")
+check("and no link row", panel._nav.rows == [], f"(got {panel._nav.rows})")
 
 print("\n[logout clears the Now Playing panel cache]")
 sp.get_current_playback = lambda: {"is_playing": True, "item": PANEL_TRACK}

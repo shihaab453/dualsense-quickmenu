@@ -7,11 +7,19 @@
 # Spotify's design guidelines require that displayed metadata always links back
 # to the service, and that users are sent to the Spotify application where it's
 # available. So these assert the spotify: URI is preferred over the https one,
-# and — the part that's easy to get wrong — that Now Playing names Spotify only
-# when the track genuinely came from Spotify, not when it came from the Windows
-# media session fallback, which reports whatever any player is doing. Claiming
-# another service's track is "on Spotify" would be worse than not attributing
-# it at all.
+# and - the part that's easy to get wrong - that attribution tracks the
+# *content*, not which lookup produced it.
+#
+# That second half was rewritten on 2026-09-06 and the direction of the
+# assertions flipped. It used to check that the Windows media-session fallback
+# was never labelled "on Spotify", because that reading reported whatever any
+# player was doing and claiming a browser's track was Spotify's would be worse
+# than not attributing it at all. actions/now_playing.py now filters that
+# reading by the session's owning application, so it returns Spotify or
+# nothing - which makes the fallback Spotify's own content, and withholding
+# the mark from it the error instead. The case that reading used to cover is
+# still here, as "something that isn't Spotify is playing": the panel shows
+# nothing at all rather than showing it unattributed.
 #
 # Nothing here opens a real browser: QDesktopServices.openUrl is stubbed and
 # records what it was asked to open.
@@ -107,11 +115,14 @@ def check_now_playing_spotify():
 
 
 def check_now_playing_fallback():
-    # Now simulate Spotify being unavailable, so the panel falls back to the
-    # Windows media session showing some other player's track.
+    # Spotify's Web API unavailable (logged out, expired token, no network),
+    # so the panel falls back to the Windows media session. That reading is
+    # Spotify-only since actions/now_playing.py started filtering by the
+    # session's owning application - so what comes back here is still
+    # Spotify's content, just read a different way.
     sp.get_current_playback = lambda: None
     import actions.now_playing as np
-    np.get = lambda: {"title": "Some Podcast", "artist": "Not Spotify"}
+    np.get = lambda: {"title": "Nocturne in E Flat", "artist": "Chopin"}
 
     overlay.open_menu()
     overlay.handle_button("up")
@@ -121,15 +132,52 @@ def check_now_playing_fallback():
 
 def after_fallback():
     panel = overlay._active_panel
-    print("\n[Now Playing — fallback to another player]")
-    check("heading does NOT claim Spotify", panel.heading.text() == "Now playing",
-          f"(got {panel.heading.text()!r})")
-    check("link row is hidden", not panel._open_row.isVisible())
-    check("and so is the Spotify mark - this track isn't theirs",
-          not panel._spotify_logo.isVisible())
-    check("the other player's track still shows",
-          "Some Podcast" in panel._song_label.text(),
+    print("\n[Now Playing - read from Spotify's Windows media session]")
+    # This block asserted the opposite until 2026-09-06, and was right to:
+    # the fallback could then be a browser or VLC, and crediting Spotify for
+    # that is what their guidelines prohibit. Once the reading became
+    # Spotify-only, withholding attribution became the error instead - it is
+    # their metadata on screen either way, and metadata has to carry the mark
+    # and link back regardless of which lookup produced it.
+    check("the track shows", "Nocturne in E Flat" in panel._song_label.text(),
           f"(got {panel._song_label.text()!r})")
+    check("heading attributes it to Spotify, because it is theirs",
+          panel.heading.text() == "Now playing on Spotify",
+          f"(got {panel.heading.text()!r})")
+    check("the Spotify mark is shown", panel._spotify_logo.isVisible())
+    check("and a link back to the service is offered",
+          panel._open_row.isVisible())
+    overlay.close_menu()
+    QTimer.singleShot(50, check_non_spotify_player)
+
+
+def check_non_spotify_player():
+    # A browser or another player owning the media session. now_playing.get()
+    # returns None for those (see tests/verify_media_session.py), so the panel
+    # has nothing to show - which is the whole point: another service's stream
+    # never reaches the screen, rather than reaching it unattributed.
+    sp.get_current_playback = lambda: None
+    import actions.now_playing as np
+    np.get = lambda: None
+
+    overlay.open_menu()
+    overlay.handle_button("up")
+    overlay.handle_button("cross")
+    QTimer.singleShot(400, after_non_spotify_player)
+
+
+def after_non_spotify_player():
+    panel = overlay._active_panel
+    print("\n[Now Playing - something that isn't Spotify is playing]")
+    check("the panel says nothing is playing",
+          "Nothing playing" in panel._song_label.text(),
+          f"(got {panel._song_label.text()!r})")
+    check("the heading makes no claim about Spotify",
+          panel.heading.text() == "Now playing",
+          f"(got {panel.heading.text()!r})")
+    check("no mark, because there is no Spotify content to attribute",
+          not panel._spotify_logo.isVisible())
+    check("and no link row", not panel._open_row.isVisible())
     overlay.close_menu()
     QTimer.singleShot(50, check_music_detail)
 

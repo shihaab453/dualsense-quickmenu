@@ -4,8 +4,14 @@
 # controls already exist one tap away in the Music panel's own Detail view
 # (reached via the Music tray icon). Prefers Spotify's own playback state
 # when logged in (accurate to what "Music" is actually playing), falling
-# back to the system-wide winrt reading (works for any app, not just
-# Spotify) when not logged in or nothing's there.
+# back to the Windows media session when not logged in or nothing's there.
+#
+# Both sources are Spotify-only. The media session reading used to report
+# whatever was playing anywhere - a browser, VLC - and this panel displayed
+# it; actions/now_playing.py now filters by the session's owning application,
+# so it returns Spotify or nothing. Read that module's comment before changing
+# anything here: the filter is a policy requirement, and this panel's
+# attribution rules below depend on it holding.
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
@@ -27,6 +33,15 @@ _ART_SIZE = 64
 # spacing between it and the text.
 _SONG_LABEL_WIDTH = 460 - 36 - 36 - _ART_SIZE - 14
 
+# Stands in for a track when the media session gave us metadata but no
+# addressable item. Shaped like a Spotify object on purpose, so it goes
+# through the same links_for/open_in_spotify path as everything else rather
+# than needing a second way to open a link.
+_SPOTIFY_SERVICE = {
+    "uri": "spotify:",
+    "external_urls": {"spotify": "https://open.spotify.com"},
+}
+
 
 class NowPlayingPanel(Panel):
     def __init__(self):
@@ -43,11 +58,12 @@ class NowPlayingPanel(Panel):
         # music.py's Detail-view history); every other panel's rows use a
         # QFrame/QWidget for exactly this reason, so this one does too.
         # Attribution sits next to the heading, and like the heading text and
-        # the open-in-Spotify row below it, it appears only when the track
-        # actually came from Spotify. This panel falls back to the Windows
-        # media session, so showing the mark unconditionally would credit
-        # Spotify for whatever is playing in a browser or another player -
-        # exactly what their guidelines prohibit. _render() owns the toggle.
+        # the open-in-Spotify row below it, it appears whenever Spotify
+        # content is on screen - from either source, since both are now
+        # Spotify-only. It is still a toggle rather than always-on, because
+        # "Nothing playing" and "Loading…" are this panel's own words and
+        # attributing those to Spotify would be crediting them for nothing.
+        # _render() owns it.
         self._spotify_logo = spotify_logo_label(20)
         self._spotify_logo.hide()
         self.heading_row.insertWidget(1, self._spotify_logo)
@@ -227,23 +243,31 @@ class NowPlayingPanel(Panel):
                 text += f"\n{info['artist']}"
         else:
             text = "Nothing playing"
-        self._last_result = (text, track)
-        self._render(text, track)
+        # Whether there is Spotify content on screen at all, from either
+        # source. Not the same question as `track is not None`: the media
+        # session path has no track object but does carry Spotify metadata,
+        # and every attribution rule below turns on the content, not on which
+        # lookup happened to answer first.
+        showing_content = track is not None or bool(
+            info and (info["title"] or info["artist"])
+        )
+        self._last_result = (text, track, showing_content)
+        self._render(text, track, showing_content)
 
-    def _render(self, text: str, track) -> None:
-        # The heading names Spotify only when the track actually came from
-        # Spotify. This panel falls back to the Windows media session, which
-        # reports whatever is playing anywhere — a browser, VLC, a competing
-        # music app — and labelling that "on Spotify" would attribute someone
-        # else's content to them, which their guidelines specifically prohibit.
+    def _render(self, text: str, track, showing_content: bool = False) -> None:
+        # Heading, mark and link row all key off showing_content rather than
+        # `track is not None`. Before actions/now_playing.py filtered by
+        # owning application, the fallback could be another player's track and
+        # crediting Spotify for it was the thing to avoid. Now the fallback is
+        # Spotify's own session, so withholding attribution would be the
+        # error: their guidelines require Spotify metadata to carry the mark
+        # and to link back, and metadata read from the media session is still
+        # their metadata.
         self._current_track = track
         self.heading.setText(
-            "Now playing on Spotify" if track is not None else "Now playing"
+            "Now playing on Spotify" if showing_content else "Now playing"
         )
-        # The mark follows the same rule as the heading text above and the
-        # link row below: shown for Spotify's content, absent for the
-        # Windows-media-session fallback.
-        self._spotify_logo.setVisible(track is not None)
+        self._spotify_logo.setVisible(showing_content)
 
         self._song_label.setText(text)
         track_id = track.get("id") if track is not None else None
@@ -258,8 +282,11 @@ class NowPlayingPanel(Panel):
 
         # Spotify's guidelines require displayed metadata to link back to the
         # service — so the row appears exactly when Spotify metadata is on
-        # screen, and not when the fallback is showing another player's track.
-        if track is None:
+        # screen, which now includes the media-session path. That path has no
+        # track object to link to, so _open_in_spotify falls back to opening
+        # Spotify itself; a link to the service satisfies the requirement even
+        # when the exact track cannot be addressed.
+        if not showing_content:
             self._open_row.hide()
             if self._nav is not None:
                 self._nav.replace_rows([])
@@ -272,4 +299,8 @@ class NowPlayingPanel(Panel):
         self.request_relayout()
 
     def _open_in_spotify(self) -> None:
-        open_in_spotify(self, self._current_track or {})
+        # A track when we have one (lands on that exact song), otherwise
+        # Spotify itself. open_in_spotify already tries the `spotify:` URI
+        # before the https one, so the desktop app opens where it is
+        # installed and the website answers where it is not.
+        open_in_spotify(self, self._current_track or _SPOTIFY_SERVICE)

@@ -519,7 +519,10 @@ class _PagedSection:
         shared flag that let finishing one list's request re-enable paging
         for the *other* one can't recur without two objects sharing state
         they don't actually share."""
-        if self.paging:
+        if self.paging or self.failed_permanent:
+            # The refusal row remains readable and selectable, but pressing
+            # it cannot make a permanently denied request succeed. Reopening
+            # the collection clears the failure and rechecks access normally.
             return  # already fetching; a second press shouldn't queue another
         self.paging = True
         if self.rows and isinstance(self.rows[-1], _LoadMoreRow):

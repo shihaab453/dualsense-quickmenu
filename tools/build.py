@@ -25,12 +25,14 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import zipfile
 from datetime import datetime, timezone
+from importlib import metadata
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # So `import version` / `import logs` below can find them: this script's own
@@ -285,9 +287,8 @@ def _selftest_passed(record: dict) -> bool:
 
 def _build_manifest(zip_path: str, git_info: dict, smoke_records: list) -> dict:
     """Everything HANDOFF.md's evidence-record item asked for, gathered into
-    one file next to the zip: source identity, the dependency lock this was
-    installed from (by content hash, so the manifest itself proves which
-    lock file's promises actually applied), a hash of the artifact, and the
+    one file next to the zip: source identity, the target dependency lock,
+    a hash of the artifact, and the
     smoke results this same run just produced. Written whether or not
     everything passed - see main()'s note on why."""
     import version
@@ -313,6 +314,8 @@ def _build_manifest(zip_path: str, git_info: dict, smoke_records: list) -> dict:
         "dependency_lock": {
             "file": os.path.basename(_LOCK_FILE),
             "sha256": lock_hash,
+            "verification": "Installed versions checked before building; "
+                            "installed file hashes were not verified.",
         },
         "artifact": {
             "file": os.path.basename(zip_path),
@@ -334,8 +337,46 @@ def _build_manifest(zip_path: str, git_info: dict, smoke_records: list) -> dict:
     }
 
 
+def _verify_installed_dependencies() -> bool:
+    """Check the environment that will actually run PyInstaller.
+
+    CI installs the lock first, but a local build uses whatever is already
+    in its interpreter. Hashing the lock into a manifest does not prove those
+    versions were installed. Fail before testing or packaging rather than
+    silently changing the developer's environment. This checks versions, not
+    the provenance or integrity of already-installed wheel contents.
+    """
+    try:
+        with open(_LOCK_FILE, encoding="utf-8") as lock:
+            pins = re.findall(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)", lock.read(), re.MULTILINE)
+    except OSError as error:
+        print(f"Cannot read the dependency lock: {error}")
+        return False
+    if not pins:
+        print("The dependency lock contains no pinned packages.")
+        return False
+    mismatches = []
+    for name, expected in pins:
+        try:
+            installed = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            installed = "not installed"
+        if installed != expected:
+            mismatches.append(f"  {name}: lock requires {expected}, found {installed}")
+    if mismatches:
+        print("The build environment does not match its dependency lock:")
+        print("\n".join(mismatches))
+        print("Install requirements-dev.lock.txt with --require-hashes using "
+              "this build's Python interpreter, then run the build again.")
+        return False
+    return True
+
+
 def main() -> int:
     python = sys.executable
+    step("installed dependency versions")
+    if not _verify_installed_dependencies():
+        return 1
     os.makedirs(_DIST_DIR, exist_ok=True)
     overall_ok = True
 

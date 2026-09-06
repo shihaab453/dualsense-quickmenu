@@ -128,14 +128,23 @@ class _Loader(QObject):
         if raw is not None:
             _remember(url, raw)
         for size, radius, callback in pending:
-            callback(rounded(raw, size, radius) if raw is not None else None)
+            try:
+                callback(rounded(raw, size, radius) if raw is not None else None)
+            except Exception:
+                # One URL can serve several widgets. A consumer deleted while
+                # the download ran must not prevent the others completing.
+                log.exception("An album artwork callback raised")
 
     def cancel_all(self) -> None:
         """Drop pending account artwork and complete callbacks with no image."""
         pending, self._pending = self._pending, {}
         for requests in pending.values():
             for _size, _radius, callback in requests:
-                callback(None)
+                try:
+                    callback(None)
+                except Exception:
+                    # Logout must reach every listener even if one is stale.
+                    log.exception("An album artwork cancellation callback raised")
 
 
 _loader = _Loader()

@@ -1349,8 +1349,10 @@ class MusicPanel(Panel):
         track_id = self._detail.current_track_id
         if not track_id:
             return None
-        liked_now = self._like_tile._active
-        return lambda: sp.set_liked(track_id, not liked_now)
+        # Capture the target on the GUI thread, but read its state when this
+        # command runs. Two presses can be queued before either refresh lands;
+        # copying the tile's old value would turn both presses into "like".
+        return lambda: sp.set_liked(track_id, not sp.is_liked(track_id))
 
     def _open_current_in_spotify(self):
         # Handing a URL to Windows, not a Spotify request — it belongs on this
@@ -1360,8 +1362,14 @@ class MusicPanel(Panel):
         return None
 
     def _toggle_shuffle(self):
-        shuffled_now = self._shuffle_tile._active
-        return lambda: sp.set_shuffle(not shuffled_now)
+        def work():
+            # Same ordering requirement as Like: the preceding command may
+            # already have changed Spotify while the tile still looks stale.
+            playback = sp.get_current_playback()
+            shuffled_now = bool(playback and playback.get("shuffle_state"))
+            sp.set_shuffle(not shuffled_now)
+
+        return work
 
     def _cycle_repeat(self):
         def work():

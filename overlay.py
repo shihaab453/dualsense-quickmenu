@@ -323,6 +323,10 @@ class _NowPlayingCard(QFrame):
         self._elide(self._source_label, f"From {source}" if source else "")
 
         art_url = summary.get("art_url")
+        if art_url != self._pending_art_url:
+            # The metadata already names the new track. Keep a placeholder
+            # until its own cover arrives, including when that download fails.
+            self._reset_art_placeholder()
         self._pending_art_url = art_url
         if art_url:
             album_art.get(

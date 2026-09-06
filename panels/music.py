@@ -900,6 +900,9 @@ class MusicPanel(Panel):
         self._detail_status.setText(self._detail.status_pending)
         self._refresh_tile_states()
         hue = abs(hash(track.get("id") or track.get("name", ""))) % 360
+        # A stylesheet background does not remove a QLabel's old pixmap.
+        # Clear the previous track's cover before starting this one's request.
+        self._detail_art.clear()
         self._detail_art.setStyleSheet(
             f"background: hsl({hue}, 45%, 40%);"
             f" border-radius: {album_art.CORNER_RADIUS}px;"

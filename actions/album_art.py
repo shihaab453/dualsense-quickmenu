@@ -79,11 +79,12 @@ def rounded(pixmap: QPixmap, size: int, radius: int) -> QPixmap:
 
 
 class _Loader(QObject):
-    _downloaded = Signal(str, bytes)
+    _downloaded = Signal(str, bytes, int)
 
     def __init__(self):
         super().__init__()
         self._pending: dict[str, list] = {}
+        self._generation = 0
         self._downloaded.connect(self._on_downloaded)
 
     def get(self, url, size: int, radius: int, callback) -> None:
@@ -102,9 +103,9 @@ class _Loader(QObject):
         already_in_flight = url in self._pending
         self._pending.setdefault(url, []).append((size, radius, callback))
         if not already_in_flight:
-            threading.Thread(target=self._fetch, args=(url,), daemon=True).start()
+            threading.Thread(target=self._fetch, args=(url, self._generation), daemon=True).start()
 
-    def _fetch(self, url: str) -> None:
+    def _fetch(self, url: str, generation: int) -> None:
         try:
             with urllib.request.urlopen(url, timeout=6) as resp:
                 data = resp.read()
@@ -114,9 +115,14 @@ class _Loader(QObject):
             # flaky image CDN is not a bug in this app.
             log.warning("Album art download failed for %s", url, exc_info=True)
             data = b""
-        self._downloaded.emit(url, data)
+        self._downloaded.emit(url, data, generation)
 
-    def _on_downloaded(self, url: str, data: bytes) -> None:
+    def _on_downloaded(self, url: str, data: bytes, generation: int) -> None:
+        # Clearing pending URLs alone cannot invalidate an old download: a
+        # new account may request the very same URL before it finishes. Its
+        # result belongs to the old generation, including an empty failure.
+        if generation != self._generation:
+            return
         pending = self._pending.pop(url, [])
         if not pending:
             return
@@ -137,6 +143,7 @@ class _Loader(QObject):
 
     def cancel_all(self) -> None:
         """Drop pending account artwork and complete callbacks with no image."""
+        self._generation += 1
         pending, self._pending = self._pending, {}
         for requests in pending.values():
             for _size, _radius, callback in requests:

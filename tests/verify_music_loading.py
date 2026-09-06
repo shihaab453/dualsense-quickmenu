@@ -486,7 +486,9 @@ check("module-level playlist names are cleared", sp._playlist_name_cache == {})
 check("decoded album artwork is cleared", len(album_art._cache) == 0)
 check("pending artwork completes empty and is forgotten",
       art_callbacks == [None] and album_art._loader._pending == {})
-album_art._loader._on_downloaded("old-account-url", b"late bytes")
+album_art._loader._on_downloaded(
+    "old-account-url", b"late bytes", album_art._loader._generation - 1
+)
 check("a late artwork download cannot repopulate the cache",
       "old-account-url" not in album_art._cache)
 submit.run_all()

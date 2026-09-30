@@ -32,3 +32,7 @@ assets/*.pdf
 assets/Primary_Logo_*.svg
 !assets/Primary_Logo_Green_RGB.svg
 assets/Spotify_Primary_Logo_RGB_*.png
+
+# Portfolio/website media (diagrams and their source), local-only like the
+# review notes above: made for shihaabalam.com, not part of the app.
+media/
